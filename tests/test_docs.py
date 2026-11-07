@@ -138,6 +138,37 @@ def test_the_installer_never_publishes_the_boards_port_or_prints_a_token():
 
 
 def test_readme_leads_the_server_install_with_the_agent_route():
-    install = README[README.index("## Install on a server"):README.index("## Lanes")]
+    install = README[README.index("## Install on a server"):README.index("## Quickstart")]
     assert install.index("hand it to your agent") < install.index("install.sh")
     assert "raw.githubusercontent.com/kvtaniguchi/fuzzpan/RELEASE/docs/setup-with-an-agent.md" in install
+
+
+def test_readme_quickstart_leads_with_the_local_agent_route():
+    quick = README[README.index("## Quickstart"):README.index("### Without Docker")]
+    assert quick.index("hand it to your agent") < quick.index("docker compose up")
+    assert "raw.githubusercontent.com/kvtaniguchi/fuzzpan/RELEASE/docs/run-locally-with-an-agent.md" in quick
+
+
+def test_the_local_guide_keeps_the_rules_and_names_real_settings():
+    guide = (ROOT / "docs/run-locally-with-an-agent.md").read_text()
+    assert "never spend money" in guide
+    assert "never see, ask for, store or print a secret" in guide
+    assert "Do not open a setup link yourself" in guide
+    assert "Bind to `127.0.0.1` only" in guide
+    # every setting it tells the agent to use exists in the code
+    main_py = (ROOT / "board/main.py").read_text()
+    compose = (ROOT / "docker-compose.yml").read_text()
+    assert "BOARD_SECURE_COOKIES" in main_py and "BOARD_DB" in main_py
+    for name in ("BOARD_PUBLIC_URL", "BOARD_HTTP_PORT", "BOARD_HTTPS_PORT"):
+        assert name in compose and name in guide
+    assert "root.crt" in guide and "root.crt" in README
+    assert "Docker route has not been run" in guide
+
+
+def test_design_notes_the_local_guide_and_what_was_and_was_not_run():
+    assert "run-locally-with-an-agent.md" in DESIGN and "not yet run" in DESIGN
+
+
+def test_readme_puts_the_server_install_above_the_local_quickstart():
+    assert README.index("## Install on a server") < README.index("## Quickstart") \
+        < README.index("### Without Docker") < README.index("## Lanes")
