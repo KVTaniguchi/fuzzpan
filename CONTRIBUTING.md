@@ -11,8 +11,8 @@ contributed code. This note will change when it does.
 
 ## Security problems
 
-Do not file a public issue for a vulnerability. Contact the maintainer privately
-and give them time to fix it before disclosure.
+Do not file a public issue for a vulnerability. See [`SECURITY.md`](SECURITY.md)
+for how to report it privately.
 
 ## License
 
