@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block main %}
+{% for feed in lanes %}
+<section class="card">
+  <h3 style="margin:0"><a href="/lanes/{{ feed.lane }}">{{ feed.name }}</a></h3>
+  <div class="notice">{{ feed.notice }}</div>
+  {% for post in feed.posts|reverse %}{% include "_post.html" %}{% else %}
+  <p class="meta">No posts yet.</p>{% endfor %}
+</section>
+{% endfor %}
+{% endblock %}

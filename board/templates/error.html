@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Something went wrong · FuzzPan{% endblock %}
+{% block main %}
+<section class="card">
+  <h3>That didn't work</h3>
+  <p class="error" role="alert">{{ message }}</p>
+  <p><a href="{{ back }}">{{ back_label }}</a></p>
+</section>
+{% endblock %}

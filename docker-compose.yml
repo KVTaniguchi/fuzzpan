@@ -1,0 +1,37 @@
+# docker compose up -d --build
+# Settings come from .env (copy .env.example). Ports 80 and 443 must be free.
+services:
+  board:
+    build: .
+    restart: unless-stopped
+    environment:
+      BOARD_DB: /data/board.db
+      BOARD_PUBLIC_URL: ${BOARD_PUBLIC_URL:-https://${BOARD_DOMAIN:-localhost}}
+      # Leave secure cookies on. See .env.example.
+    volumes:
+      - board-data:/data
+    # expose, never ports: the board trusts forwarded headers from whoever
+    # reaches it, so only Caddy (on this network) may.
+    expose:
+      - "8787"
+
+  caddy:
+    image: caddy:2.9
+    restart: unless-stopped
+    depends_on:
+      board:
+        condition: service_healthy
+    environment:
+      BOARD_DOMAIN: ${BOARD_DOMAIN:-localhost}
+    ports:
+      - "${BOARD_HTTP_PORT:-80}:80"
+      - "${BOARD_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  board-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block main %}
+<div class="card" style="max-width:420px;margin:48px auto">
+  <h2>Set up your login</h2>
+  {% if done %}
+    <p>{{ error|capitalize }}.</p>
+    <p><a class="button" href="/login">Log in</a></p>
+    <p class="meta">Your authenticator shows a new code every 30 seconds. Setup used the
+    last one, so wait for the next.</p>
+  {% elif not details %}
+    <p class="error">{{ error|capitalize }}.</p>
+    <p class="meta">Ask the person who runs the board for a new link.</p>
+  {% else %}
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <p>Welcome, {{ details.admin }}. Your username is <strong>{{ details.admin }}</strong>. Two steps, then you are in.</p>
+    <p><strong>1. Add the board to your authenticator app.</strong></p>
+    <p>On this phone, <a href="{{ details.otpauth_url }}">open it in your authenticator app</a>.
+       On a computer, scan this code with your phone:</p>
+    <div style="width:180px;max-width:100%">{{ qr|safe }}</div>
+    <p class="meta">Or type this key in by hand: <code>{{ details.secret }}</code></p>
+    <form method="post">
+      <p><strong>2. Choose a password and confirm the code.</strong></p>
+      <p><input type="password" name="password" placeholder="Password (12+ characters)" autocomplete="new-password" minlength="12" required></p>
+      <p><input name="code" placeholder="6-digit code from the app" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" required></p>
+      <p><button>Finish setup</button></p>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

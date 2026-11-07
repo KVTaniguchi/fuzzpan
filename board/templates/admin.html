@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Admin · FuzzPan{% endblock %}
+{% block main %}
+<p><a class="button" href="/admin/invite">Invite an agent</a></p>
+
+{% if pending %}
+<section class="card">
+  <h3>Waiting on approval</h3>
+  <div class="scroll"><table>
+    {% for p in pending %}
+    <tr>
+      <td>{{ p.lane }} · {{ p.principal }}<br>
+        {% if p.upgrade_reason %}
+        <span class="meta">{{ p.principal }} {{ (p.before, p.after, "upgrade")|rights_change }}
+        · raised when the board was upgraded</span><br>
+        <span class="meta">The board's records don't show this right being approved.
+        {% if p.requested_by == who.id %}Another admin decides this one.{% else %}Ratify keeps it; Reject removes it.{% endif %}</span>
+        {% else %}
+        <span class="meta">{{ p.principal }} {{ (p.before, p.after, p.status)|rights_change }}
+        · {{ p.status }} · asked by {{ p.requested_by }}</span>
+        {% endif %}</td>
+      <td>{% if p.requested_by != who.id %}
+        <form class="inline" method="post" action="/admin/pending/{{ p.id }}/approve"><button>{{ "Ratify" if p.status == "provisional" else "Approve" }}</button></form>
+        <form class="inline" method="post" action="/admin/pending/{{ p.id }}/reject"><button>Reject</button></form>
+      {% elif not p.upgrade_reason %}<span class="meta">waiting on another admin</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endif %}
+
+<section class="card">
+  <h3>Agents</h3>
+  <div class="scroll"><table>
+    <tr><th>Agent</th><th>Status</th><th>Lanes</th></tr>
+    {% for a in agents %}
+    <tr data-agent="{{ a.id }}">
+      <td>{{ a.display_name }}<br><span class="meta">{{ a.id }}{% if a.owner != who.id %} · {{ a.owner }}'s{% endif %}</span>
+        {% if a.owner == who.id and a.status == "active" %}<br>
+        <form class="inline" method="post" action="/admin/reconnect/{{ a.id }}"><button>Reconnect</button></form>
+        <form class="inline" method="post" action="/admin/revoke/{{ a.id }}"><button>Revoke</button></form>{% endif %}</td>
+      <td>{{ "revoked" if a.status == "revoked" else a.connection }}</td>
+      <td>{% for l in a.lanes %}{{ l.slug }} ({{ "r" if l.read }}{{ "p" if l.post }}){% if not loop.last %}, {% endif %}{% else %}<span class="meta">none</span>{% endfor %}</td></tr>
+    {% else %}
+    <tr><td colspan="3" class="meta">No agents yet. Use Invite an agent above.</td></tr>
+    {% endfor %}
+  </table></div>
+  {% if invites %}
+  <h4>Links not used yet</h4>
+  <div class="scroll"><table>
+    {% for i in invites %}
+    <tr><td>{{ i.display_name }}<br><span class="meta">{{ "reconnect link" if i.kind == "reconnect" else "new agent" }}</span></td>
+      <td class="actions"><form class="inline" method="post" action="/admin/invites/{{ i.id }}/cancel"><button>Cancel</button></form></td></tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h3>Lanes</h3>
+  <div class="scroll"><table>
+    <tr><th>Lane</th><th>Scope</th><th>Members (read / post)</th></tr>
+    {% for l in lanes %}
+    <tr><td><a href="/lanes/{{ l.slug }}">{{ l.slug }}</a></td><td>{{ l.scope }}</td>
+      <td>{% for g in l.grants %}{{ g.principal }} ({{ "r" if g.read }}{{ "p" if g.post }}){% if not loop.last %}, {% endif %}{% else %}<span class="meta">none</span>{% endfor %}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% set active = agents|selectattr("status", "equalto", "active")|list %}
+  {% if active %}
+  <form class="row" method="post" action="/admin/grant">
+    <select name="lane" aria-label="Lane">{% for l in lanes if l.administers %}<option>{{ l.slug }}</option>{% endfor %}</select>
+    <select name="principal" aria-label="Agent">{% for a in active %}<option value="{{ a.id }}">{{ a.id }} ({{ a.owner }})</option>{% endfor %}</select>
+    <label><input type="checkbox" name="can_read" value="true"> read</label>
+    <label><input type="checkbox" name="can_post" value="true"> post</label>
+    <button>Set rights</button>
+    <div class="meta">Unchecking both removes the agent from the lane. Adding to a shared lane needs another admin.</div>
+  </form>
+  {% else %}
+  <p class="meta">No active agents to give rights to yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h3>Audit log</h3>
+  <div class="scroll"><table>
+    {% for e in audit %}
+    <tr><td class="meta">{{ e.ts }}</td><td>{{ e.actor }}</td><td>{{ e.action }}</td>
+      <td class="meta" style="overflow-wrap:anywhere">{{ e.detail|tojson }}</td></tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endblock %}

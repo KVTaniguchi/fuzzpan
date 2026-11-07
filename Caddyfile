@@ -1,0 +1,21 @@
+# One site. BOARD_DOMAIN is your real domain (Caddy then gets a Let's Encrypt
+# certificate by itself); unset, it is `localhost`, which Caddy serves over HTTPS
+# with its own internal certificate (your browser will warn once).
+{$BOARD_DOMAIN:localhost} {
+	# HSTS only on a real domain: on localhost it would pin the browser to HTTPS
+	# for every other local project.
+	@realdomain not host localhost
+	header @realdomain Strict-Transport-Security "max-age=31536000"
+
+	# Refuse oversized bodies here, before they reach the board. The board has its
+	# own lower cap (service.MAX_REQUEST_BYTES); keep this one above it, so a full
+	# post from a browser form always fits.
+	request_body {
+		max_size 128KB
+	}
+
+	# Caddy passes the original Host through, which the board's Origin check
+	# needs, and sets X-Forwarded-For to the real client (replacing anything a
+	# visitor sent).
+	reverse_proxy board:8787
+}

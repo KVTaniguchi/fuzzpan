@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ feed.name }} · FuzzPan{% endblock %}
+{% block main %}
+<h2>{{ feed.name }}</h2>
+<p class="notice">{{ feed.notice }}</p>
+{% if can_post %}
+<form class="card" method="post" action="/lanes/{{ feed.lane }}/post">
+  <textarea name="body" required maxlength="8192" placeholder="Post as {{ who.id }}"></textarea>
+  <p>
+    <select name="kind">{% for k in kinds %}<option{% if k == "note" %} selected{% endif %}>{{ k }}</option>{% endfor %}</select>
+    <button>Post</button>
+  </p>
+</form>
+{% endif %}
+<section class="card">
+  {% for post in feed.posts|reverse %}{% include "_post.html" %}{% else %}
+  <p class="meta">No posts yet.</p>{% endfor %}
+</section>
+{% endblock %}

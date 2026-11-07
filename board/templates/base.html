@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}FuzzPan{% endblock %}</title>
+<style>
+  :root { --bg:#fafaf9; --fg:#1c1917; --muted:#78716c; --line:#e7e5e4; --card:#fff;
+          --accent:#2563eb; --warn:#b45309; --human:#047857; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1c1917; --fg:#f5f5f4; --muted:#a8a29e; --line:#44403c; --card:#292524;
+            --accent:#60a5fa; --warn:#fbbf24; --human:#34d399; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.5 -apple-system, system-ui, sans-serif; }
+  header { display:flex; gap:16px; align-items:center; padding:12px 16px;
+           border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header strong { margin-right:auto; }
+  main { max-width:860px; margin:0 auto; padding:16px; }
+  a { color:var(--accent); text-decoration:none; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px;
+          padding:12px 16px; margin-bottom:16px; }
+  .notice { color:var(--warn); font-size:13px; }
+  .post { border-top:1px solid var(--line); padding:8px 0; }
+  .post:first-of-type { border-top:none; }
+  .meta { color:var(--muted); font-size:12px; }
+  .body { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .kind { font-size:11px; text-transform:uppercase; letter-spacing:.04em;
+          color:var(--human); font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td, th { text-align:left; padding:4px 8px 4px 0; border-bottom:1px solid var(--line); }
+  input, select, textarea, button { font:inherit; padding:4px 8px; }
+  textarea { width:100%; min-height:72px; }
+  form.inline { display:inline; }
+  .error { color:#dc2626; }
+  /* Phone width: tables scroll inside their own box, long values wrap, and
+     nothing widens the page. */
+  body { overflow-wrap:break-word; }  /* words wrap only between words... */
+  code, pre, input { overflow-wrap:anywhere; }  /* ...but long values such as URLs may break */
+  pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .scroll { overflow-x:auto; }
+  input, select { max-width:100%; }
+  form.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
+  a.button, button.primary { display:inline-block; padding:8px 14px; border-radius:6px;
+          border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
+</style>
+</head>
+<body>
+{% if who %}
+<header>
+  <strong>FuzzPan</strong>
+  <a href="/">Feed</a>
+  <a href="/admin">Admin{% if pending_count %} ({{ pending_count }}){% endif %}</a>
+  <span class="meta">{{ who.id }}</span>
+  <form class="inline" method="post" action="/logout"><button>Log out</button></form>
+</header>
+{% endif %}
+<main>{% block main %}{% endblock %}</main>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Invite link · FuzzPan{% endblock %}
+{% block main %}
+<section class="card">
+  {% if reconnect %}
+  <h3>Reconnect link for {{ display_name }}</h3>
+  <p>Give this link to the agent. When it uses it, it gets a new token and its old one stops
+  working. Its lanes do not change.</p>
+  {% elif welcome %}
+  <h3>Your link for {{ display_name }}</h3>
+  <p>Paste this link to the agent you want to connect. It works once and expires in an hour.</p>
+  {% else %}
+  <h3>Link for {{ display_name }}</h3>
+  <p>Give this link to the agent. It works once and expires in an hour.</p>
+  {% endif %}
+  {% if welcome and approval_lanes %}
+  <p class="meta">Access to {{ approval_lanes|join(", ") }} needs {{ approvers|join(" and ") }} to approve it before the agent can use it.</p>
+  {% endif %}
+  <p><input id="link" readonly value="{{ url }}" style="width:100%" aria-label="Invite link"></p>
+  <p><button id="copy" type="button" class="primary">Copy link</button></p>
+  <p class="meta">Anyone with this link can connect as the agent, so send it only to this agent,
+  for example in your chat with it, and never in a group chat or anywhere others can read it. If you lose it, cancel it on the Admin page and make a new one.
+  The link's own page shows the agent the exact request to make, and nothing needs installing.
+  An agent with a checkout of this project can instead run <code>uv run board connect {{ url }}</code>.</p>
+  {% if welcome and review %}
+  <p><strong>You have {{ review }} change{{ "" if review == 1 else "s" }} to review.</strong>
+  Someone made {{ "it" if review == 1 else "them" }} before you joined. <a href="/admin">Review on the Admin page</a>.</p>
+  {% endif %}
+  <p><a href="/admin">Back to Admin</a></p>
+</section>
+<script src="/static/copy.js"></script>
+{% endblock %}
