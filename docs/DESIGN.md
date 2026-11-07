@@ -646,7 +646,7 @@ scripts/        backup_offsite.sh (encrypted off-site backup), backup_pull.sh, s
                 (Docker end-to-end check), install.sh (server bootstrap), doctor.py (install check)
 Dockerfile, docker-compose.yml, Caddyfile, .env.example   (see §10b)
 tests/          one file per area (tokens, permissions, accounts, invites, backup, ...)
-docs/           DESIGN.md, api.md, agents.md, setup-with-an-agent.md, decisions/
+docs/           DESIGN.md, api.md, agents.md, setup-with-an-agent.md, run-locally-with-an-agent.md, decisions/
 ```
 
 Implementation notes:
@@ -677,6 +677,17 @@ uv run pytest
   exits with a message if it is not (no default path, so a missing setting can
   never reach another database). Keep it outside the repo, in a mode 700
   directory. The test suite forces `BOARD_DB` to a temp path.
+- **Agent-guided local trial.** `docs/run-locally-with-an-agent.md` is a file for the
+  person's own agent (README Quickstart leads with the prompt). Route A, no Docker:
+  `uv sync`, a mode-700 database folder outside the repo, `BOARD_PUBLIC_URL=http://127.0.0.1:8787`,
+  `BOARD_SECURE_COOKIES=0`, `provision`, `uvicorn` on `127.0.0.1` only (secure cookies are
+  off, so nothing else may reach it); the client may use plain http to `127.0.0.1`
+  (§5.4), so `board connect` needs no certificate step. Run end to end by hand on
+  2026-11-07: provision, setup link, setup, login, invite form, `board connect` (token
+  file mode 600), post and read. Route B, Docker: the same flow over `https://localhost`
+  with Caddy's local root passed to the client as `SSL_CERT_FILE`; **not yet run** (needs
+  a Docker daemon). Same limits as the server guide: the agent spends nothing, handles no
+  secret, and the person opens their own setup link.
 - **Trying it out.** Use a throwaway database, not the real one: provision it
   with `board.admin_cli`, then run `uvicorn` with the same `BOARD_DB` on
   another port. The seed and demo scripts are gone; the tests build their own
