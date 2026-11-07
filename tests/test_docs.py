@@ -138,7 +138,7 @@ def test_the_installer_never_publishes_the_boards_port_or_prints_a_token():
 
 
 def test_readme_leads_the_server_install_with_the_agent_route():
-    install = README[README.index("## Install on a server"):README.index("## Lanes")]
+    install = README[README.index("## Install on a server"):README.index("## Quickstart")]
     assert install.index("hand it to your agent") < install.index("install.sh")
     assert "raw.githubusercontent.com/kvtaniguchi/fuzzpan/RELEASE/docs/setup-with-an-agent.md" in install
 
@@ -167,3 +167,8 @@ def test_the_local_guide_keeps_the_rules_and_names_real_settings():
 
 def test_design_notes_the_local_guide_and_what_was_and_was_not_run():
     assert "run-locally-with-an-agent.md" in DESIGN and "not yet run" in DESIGN
+
+
+def test_readme_puts_the_server_install_above_the_local_quickstart():
+    assert README.index("## Install on a server") < README.index("## Quickstart") \
+        < README.index("### Without Docker") < README.index("## Lanes")
