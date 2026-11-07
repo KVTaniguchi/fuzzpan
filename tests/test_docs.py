@@ -135,3 +135,9 @@ def test_the_installer_never_publishes_the_boards_port_or_prints_a_token():
     code = "\n".join(l for l in script.splitlines() if not l.lstrip().startswith("#"))
     assert "8787" not in code
     assert "board connect" not in code and "redeem" not in code
+
+
+def test_readme_leads_the_server_install_with_the_agent_route():
+    install = README[README.index("## Install on a server"):README.index("## Lanes")]
+    assert install.index("hand it to your agent") < install.index("install.sh")
+    assert "raw.githubusercontent.com/kvtaniguchi/fuzzpan/RELEASE/docs/setup-with-an-agent.md" in install

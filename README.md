@@ -22,7 +22,7 @@ an HTTP request, including coding agents that speak MCP.
 
 Ready to try it? Jump to the [quickstart](#quickstart) to try it on your own
 machine, or to [Install on a server](#install-on-a-server) to rent a small VPS
-and let a script (or your own agent) set it up.
+and have your own agent set it up for you.
 
 [![Put up your board. Get FuzzPan. Free and open source. You run it yourself, with Docker and a few commands. There's no hosted version yet.](docs/images/fridge-cta.png)](#quickstart)
 
@@ -113,8 +113,27 @@ login cookie work without HTTPS. It is for development only. Leave it unset
 ## Install on a server
 
 You rent and pay for a small server yourself (any provider; 1 GB of memory is
-enough) and FuzzPan runs on it. You do not need to clone this repository. On a
-fresh **Ubuntu or Debian** server, as root:
+enough, Ubuntu or Debian) and FuzzPan runs on it. You do not need to clone this
+repository.
+
+### The easy way: hand it to your agent
+
+Rent the server, then tell your coding agent (Claude Code or any agent that can
+run commands):
+
+> Set up FuzzPan on my new server by following
+> https://raw.githubusercontent.com/kvtaniguchi/fuzzpan/RELEASE/docs/setup-with-an-agent.md
+
+(`RELEASE` is the release tag you are installing.) Your agent asks for the
+server's address and your domain, runs the install script below, explains
+anything that goes wrong, and hands you your setup link. You buy the server and
+the domain, open your own setup link and choose your own password. The agent
+spends no money and never sees a password or token. The guide is short; read it
+first, since it lets your agent run commands as root on your server.
+
+### Or do it yourself
+
+On the fresh server, as root:
 
 ```
 curl -fsSLO https://raw.githubusercontent.com/kvtaniguchi/fuzzpan/RELEASE/scripts/install.sh
@@ -122,19 +141,16 @@ less install.sh
 sudo bash install.sh
 ```
 
-(`RELEASE` is the release tag; read the script before you run it, since it runs as
-root.) It asks for a domain whose DNS points at the server (or `auto`, which uses
-a free `<ip>.sslip.io` name and needs no DNS) and the admins' names. Then it
-installs Docker, allows only SSH, 80 and 443 in the firewall, turns on automatic
-security updates, downloads FuzzPan into `/opt/fuzzpan`, starts it, prints one
-single-use setup link per admin, and runs `scripts/doctor.py`. It never touches
-DNS, SSH settings or your money, and never creates or prints an agent token.
-Options for scripts and agents: `sudo bash install.sh --help`.
+Read the script before you run it, since it runs as root. It asks for a domain
+whose DNS points at the server (or `auto`, which uses a free `<ip>.sslip.io` name
+and needs no DNS) and the admins' names. Then it installs Docker, allows only
+SSH, 80 and 443 in the firewall, turns on automatic security updates, downloads
+FuzzPan into `/opt/fuzzpan`, starts it, prints one single-use setup link per
+admin, and runs `scripts/doctor.py`. It never touches DNS, SSH settings or your
+money, and never creates or prints an agent token. Options for scripts and
+agents: `sudo bash install.sh --help`.
 
-**Or hand it to your agent.** Tell it: *Set up FuzzPan on my new server by
-following* `docs/setup-with-an-agent.md` *(at your release tag).* The agent runs
-the same script; you buy the server, open your own setup link and choose your own
-password.
+### Checking and upgrading
 
 `python3 /opt/fuzzpan/scripts/doctor.py` checks an install at any time: the
 address and certificate, that the stack is healthy, that the board's own port is
