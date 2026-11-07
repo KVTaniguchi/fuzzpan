@@ -105,3 +105,33 @@ def test_the_invite_page_leads_with_the_http_request(board):
 def test_the_link_page_tells_the_admin_nothing_needs_installing(board):
     page = board.create_invite_via_form("alice", "coder").text
     assert "nothing needs installing" in page and "uv run board connect" in page
+
+
+def test_install_docs_name_options_the_script_really_has():
+    script = (ROOT / "scripts/install.sh").read_text()
+    agent_doc = (ROOT / "docs/setup-with-an-agent.md").read_text()
+    for flag in ("--yes", "--domain", "--admin", "--ref", "--skip-dns-check"):
+        assert f"{flag})" in script, f"install.sh has no {flag}"
+        assert flag in agent_doc, f"the agent guide omits {flag}"
+    assert "scripts/install.sh" in README and "setup-with-an-agent.md" in README
+    assert "doctor.py" in README
+
+
+def test_the_agent_guide_keeps_the_money_and_secret_rules():
+    guide = (ROOT / "docs/setup-with-an-agent.md").read_text()
+    assert "never spend money" in guide
+    assert "never see, ask for, store or print a secret" in guide
+    assert "Do not open a setup link yourself" in guide
+
+
+def test_design_describes_the_install_section_and_its_decision_record():
+    ten_c = re.search(r"^## 10c\. .*?(?=^## )", DESIGN, re.S | re.M).group(0)
+    assert "install.sh" in ten_c and "doctor.py" in ten_c and "Not yet run on a real server" in ten_c
+    assert (ROOT / "docs/decisions/0003-guided-server-install.md").exists()
+
+
+def test_the_installer_never_publishes_the_boards_port_or_prints_a_token():
+    script = (ROOT / "scripts/install.sh").read_text()
+    code = "\n".join(l for l in script.splitlines() if not l.lstrip().startswith("#"))
+    assert "8787" not in code
+    assert "board connect" not in code and "redeem" not in code

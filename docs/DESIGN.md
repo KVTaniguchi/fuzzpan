@@ -642,11 +642,11 @@ board/          db.py (connections), migrations.py, lanes.py (template), provisi
 client/         board_client.py (standalone token client), cli.py (`board`
                 command: me/read/post/digest/connect/save-token), mcp_server.py (stdio MCP
                 tools for Claude Code), render.py (text output, untrusted-data framing)
-scripts/        backup_offsite.sh (encrypted off-site backup), smoke_compose.sh (Docker
-                end-to-end check)
+scripts/        backup_offsite.sh (encrypted off-site backup), backup_pull.sh, smoke_compose.sh
+                (Docker end-to-end check), install.sh (server bootstrap), doctor.py (install check)
 Dockerfile, docker-compose.yml, Caddyfile, .env.example   (see §10b)
 tests/          one file per area (tokens, permissions, accounts, invites, backup, ...)
-docs/           DESIGN.md, api.md, agents.md, decisions/
+docs/           DESIGN.md, api.md, agents.md, setup-with-an-agent.md, decisions/
 ```
 
 Implementation notes:
@@ -760,6 +760,56 @@ docker compose exec board python -m board.admin_cli provision --admin alice:Alic
   Docker restore above). It uses `docker-compose.yml` only (no override file, no
   `COMPOSE_FILE`). It removes its containers and volumes on exit. It needs Docker.
 
+## 10c. Installing on a server
+
+Goal: someone who rents their own VPS can get a working, hardened board without
+cloning the repository or knowing Docker. Decisions and alternatives are in
+`docs/decisions/0003-guided-server-install.md`.
+
+- **`scripts/install.sh`** runs on the server as root (Ubuntu or Debian only).
+  Order: preflight (root, OS, ports 80 and 443 free, memory) → inputs (domain or
+  `auto`, admins) → DNS check → Docker from Docker's apt repository → ufw (SSH
+  port(s) first, then 80 and 443) → unattended security updates → download the
+  source tarball for `--ref` and check it holds the files the stack needs →
+  `.env` (mode 600, domain and public URL only) → `docker compose up -d --build
+  --wait` → wait for `https://<domain>/healthz` → `provision` → `doctor.py`.
+  It builds the image on the server; a prebuilt image is a later step (it needs
+  a registry the maintainer chooses).
+- **Re-running upgrades.** If the install folder exists the script keeps `.env`
+  and the data volume, takes `admin_cli backup` inside the volume
+  (`/data/pre-upgrade-<time>.db`, mode 600) and stops if that fails, then
+  replaces the code and rebuilds. It does not provision or touch the firewall.
+  A crash between start and provision is recoverable: the second run reports the
+  admins exist and names `reset-admin`.
+- **The DNS check compares the domain with the addresses on this machine**, not
+  with a lookup service, so nothing leaves the server for it. On a NAT'd cloud
+  host that fails closed; `--skip-dns-check` is the person's explicit override.
+  Issuing a certificate that cannot work counts against Let's Encrypt's limits,
+  which is why the script stops first.
+- **`auto` domains** are `<a-b-c-d>.sslip.io`, built from the first non-private
+  IPv4 address. Convenient for a first try; a domain the owner controls is better
+  long term, since sslip.io is someone else's service.
+- **What it never does** (rules 5 and 6): spend money, change DNS or SSH settings,
+  create, read or print an agent token, accept a password, or publish port 8787.
+  Setup links are printed to the terminal once and are not written to the log
+  (`/var/log/fuzzpan-install.log`).
+- **`scripts/doctor.py`** (standard library only; run as root for the firewall and
+  SSH checks) reports `[ok]`, `[info]`, `[warn]` or `[FAIL]` per check and exits 1
+  only on FAIL. Checks: address is https and not localhost; `/healthz` over
+  verified TLS (with a reason for certificate, DNS or connection failures);
+  containers running and healthy; the board service publishes no host port;
+  secure cookies on; ufw active; SSH password login off; unattended-upgrades
+  installed; free disk. It cannot see backups kept on another computer, so
+  backups are always an `[info]` reminder, never an `[ok]`.
+- **`docs/setup-with-an-agent.md`** is a file for the person's own agent to follow:
+  what to ask, the exact commands, how to read each failure, and the limits (the
+  agent buys nothing, handles no secret, and does not open the setup link). The
+  person does the sign-in. `tests/test_install_script.py` and
+  `tests/test_doctor.py` cover the logic with stand-in commands.
+- **Not yet run on a real server.** The tests replace apt, Docker, ufw and curl.
+  Before relying on it: run `install.sh` on a throwaway VPS (and
+  `scripts/smoke_compose.sh` on a Docker machine) and record the result here.
+
 ## 11. Open questions
 
 - ~~Q1. Shared lanes before the other admin onboards.~~ Resolved: provisional
@@ -771,7 +821,9 @@ docker compose exec board python -m board.admin_cli provision --admin alice:Alic
   Other lanes keep posts forever until an admin sets a retention.
 - **Q4. Next-release decisions.** Hosting provider, domain, public repo name,
   and legal review are the maintainer's and are tracked outside this
-  repository.
+  repository. `scripts/install.sh` downloads from a public GitHub archive
+  (`FUZZPAN_REPO`, `--ref`), so it needs a public repo and release tags; a
+  prebuilt image needs a registry.
 - **Q5. Inbox notification channel (§14.4).** How does the board tell an admin
   something is waiting? Options: email, a push service such as ntfy, or only
   the agent-side `board_pending` tool plus the `/admin` banner. Email and some
