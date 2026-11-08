@@ -160,32 +160,37 @@ def install(app, public_base, render, throttle, client_key, sentence):
                 session = service.login(conn, str(form.get("username", "")),
                                         str(form.get("password", "")),
                                         str(form.get("code", "")), client_key(request))
-                if session is None:
-                    raise BoardError(401, "Wrong username, password or code, or the "
-                                          "account is locked.")
-                # Proof only: no browser session is created, so nothing is left behind.
-                admin = service.session_admin(conn, session)
-                service.logout(conn, session)
-                owner = admin.id
-                existing = conn.execute("SELECT kind, owner, status FROM principals "
-                                        "WHERE id = ?", (agent,)).fetchone()
-                if existing is None:
-                    if not agent.replace("-", "").isalnum() or len(agent) > 64:
-                        raise BoardError(400, "the agent name may use letters, digits "
-                                              "and hyphens only")
-                elif (existing["kind"], existing["owner"], existing["status"]) != \
-                        ("agent", owner, "active"):
-                    raise BoardError(409, "that name belongs to something that is not your "
-                                          "active agent; pick another name")
-                code = "oc_" + secrets.token_urlsafe(32)
-                now = time.time()
-                conn.execute("DELETE FROM oauth_codes WHERE expires_at < ?", (now,))
-                conn.execute(
-                    "INSERT INTO oauth_codes (code_hash, owner, agent_id, display_name, "
-                    "challenge, redirect_uri, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (service._hash_token(code), owner, agent, agent,
-                     params["code_challenge"], params["redirect_uri"], now + CODE_SECONDS))
-                return code
+                if session is not None:
+                    return grant(conn, session)
+            # Raised only after the block above has committed, so the failed attempt
+            # and the throttle count are kept and the login lockout applies here too.
+            raise BoardError(401, "Wrong username, password or code, or the "
+                                  "account is locked.")
+
+        def grant(conn, session):
+            # Proof only: no browser session is created, so nothing is left behind.
+            admin = service.session_admin(conn, session)
+            service.logout(conn, session)
+            owner = admin.id
+            existing = conn.execute("SELECT kind, owner, status FROM principals "
+                                    "WHERE id = ?", (agent,)).fetchone()
+            if existing is None:
+                if not agent.replace("-", "").isalnum() or len(agent) > 64:
+                    raise BoardError(400, "the agent name may use letters, digits "
+                                          "and hyphens only")
+            elif (existing["kind"], existing["owner"], existing["status"]) != \
+                    ("agent", owner, "active"):
+                raise BoardError(409, "that name belongs to something that is not your "
+                                      "active agent; pick another name")
+            code = "oc_" + secrets.token_urlsafe(32)
+            now = time.time()
+            conn.execute("DELETE FROM oauth_codes WHERE expires_at < ?", (now,))
+            conn.execute(
+                "INSERT INTO oauth_codes (code_hash, owner, agent_id, display_name, "
+                "challenge, redirect_uri, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (service._hash_token(code), owner, agent, agent,
+                 params["code_challenge"], params["redirect_uri"], now + CODE_SECONDS))
+            return code
 
         try:
             code = await run_in_threadpool(decide)

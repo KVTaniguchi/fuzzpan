@@ -194,6 +194,15 @@ def test_approval_needs_real_admin_credentials(board):
     assert r.status_code == 400 and "location" not in r.headers
 
 
+def test_failed_approvals_count_toward_the_login_lockout(board):
+    _, challenge = pkce()
+    for _ in range(service.LOCK_AFTER):
+        assert approve(board, "alice", challenge, password="wrong").status_code == 401
+    # Locked now: even the right password and a fresh code are refused.
+    r = approve(board, "alice", challenge)
+    assert r.status_code == 401 and "location" not in r.headers
+
+
 def test_cannot_take_over_someone_elses_agent(board):
     board.register("bob", "bobs-bot")
     _, challenge = pkce()
