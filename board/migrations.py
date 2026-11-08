@@ -613,9 +613,28 @@ def _migration_12(conn):
                  "ON agent_connections (agent_id)")
 
 
+def _migration_13(conn):
+    """Lanes chosen on the sign-in page (decisions/0006). After the admin proves who
+    they are, an `oauth_approvals` row holds the validated request for five minutes
+    while they tick lanes; only the ticket's hash is kept. The code then carries the
+    chosen lanes, which apply when the code is spent, as an invite's lanes do."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(oauth_codes)")}
+    if "lanes_json" not in columns:
+        conn.execute("ALTER TABLE oauth_codes ADD COLUMN lanes_json TEXT NOT NULL "
+                     "DEFAULT '{}'")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS oauth_approvals (
+            ticket_hash  TEXT PRIMARY KEY,
+            owner        TEXT NOT NULL,
+            agent_id     TEXT NOT NULL,
+            params_json  TEXT NOT NULL,
+            expires_at   REAL NOT NULL
+        )""")
+
+
 MIGRATIONS = [_migration_1, _migration_2, _migration_3, _migration_4, _migration_5,
               _migration_6, _migration_7, _migration_8, _migration_9, _migration_10,
-              _migration_11, _migration_12]
+              _migration_11, _migration_12, _migration_13]
 
 
 class DatabaseTooNew(Exception):
