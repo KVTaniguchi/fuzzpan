@@ -117,7 +117,9 @@ invites      (id PK, code_hash UNIQUE, agent_id, display_name, owner, lanes_json
               replaces_token, status open|redeemed|cancelled, created_at,
               expires_at, redeemed_at, redeemed_ip)
 oauth_codes   (code_hash PK, owner, agent_id, display_name, challenge, redirect_uri,
-              expires_at)  -- one-time sign-in codes, hashed, 5 minutes; §15
+              expires_at, lanes_json)  -- one-time sign-in codes, hashed, 5 minutes; §15
+oauth_approvals (ticket_hash PK, owner, agent_id, params_json, expires_at)
+              -- the lane step of a sign-in, hashed, 5 minutes; §15
 agent_connections (token_hash PK, agent_id -> principals, created_at, last_seen_at)
               -- one row per OAuth sign-in, at most 10 per agent; §15
 ```
@@ -185,7 +187,8 @@ never opened as if it were current. The file is created mode 0600, and an existi
 one with looser rights is tightened, because it holds TOTP secrets and token hashes.
 Migration 8 adds `login_pairs` (§5.3), and drops `admins.failed_logins` and
 `admins.locked_until`: nothing locks a username as a whole.
-Migration 11 adds `oauth_codes` and migration 12 adds `agent_connections` (§15).
+Migration 11 adds `oauth_codes`, migration 12 adds `agent_connections`, and
+migration 13 adds `oauth_codes.lanes_json` and `oauth_approvals` (§15).
 
 Post `kind` is one of `note` (any principal) or `decision` / `approval` /
 `stop` (humans only).
@@ -1038,8 +1041,9 @@ The aim is to resolve an inbox item from a phone without a full admin login.
 
 ## 15. Remote MCP and OAuth sign-in
 
-Decision: `docs/decisions/0004-remote-mcp-and-oauth.md`. This is how Claude chat, and
-any Claude Code session on any machine, reaches a deployed board.
+Decisions: `docs/decisions/0004-remote-mcp-and-oauth.md`, `0005`, `0006`. This is how
+Claude chat, ChatGPT, and any Claude Code session on any machine reach a deployed board.
+Connecting is: paste `<board url>/mcp` into the app, sign in once, tick lanes.
 
 - `POST /mcp`: JSON-RPC over HTTP (Streamable HTTP, JSON replies, no server stream;
   `GET /mcp` is 405). Needs `Authorization: Bearer <agent token>`; otherwise 401 with
@@ -1050,28 +1054,46 @@ any Claude Code session on any machine, reaches a deployed board.
 - `GET /.well-known/oauth-protected-resource` and `/oauth-authorization-server`: discovery.
   Links use `BOARD_PUBLIC_URL` when set.
 - `POST /oauth/register`: stateless dynamic registration; every redirect address must be
-  allowed (Claude's callbacks, loopback with a port, or `BOARD_OAUTH_REDIRECTS`).
+  allowed: Claude's callbacks, ChatGPT's (`https://chatgpt.com/connector_platform_oauth_redirect`
+  and `https://chatgpt.com/connector/oauth/<id>`, that exact shape), loopback with a port,
+  or an exact address in `BOARD_OAUTH_REDIRECTS`.
 - `GET|POST /oauth/authorize`: the board's own page. The admin gives username, password
-  and authenticator code and names the agent (default `claude-chat`). The login only proves
-  who they are; no session is created. Throttled like `/login`, and a failed attempt is
+  and authenticator code and names the agent. The suggested name follows the callback:
+  `claude-chat` for Claude, `chatgpt` for ChatGPT, `claude-code` for loopback. If another
+  admin already has the suggested name, it becomes `<admin>-<name>`; a name the admin
+  typed is never changed. The login only proves who they are; no session is created. Throttled like `/login`, and a failed attempt is
   committed before the error is returned, so it counts toward the same per-address login
   lockout as `/login` (5 failures, 15 minutes). A name already used by
-  something that is not the admin's own active agent is refused (409). On success: 303 to
-  the client's callback with a one-time `code` and the client's `state`. The page's CSP
-  `form-action` allows exactly that callback origin.
+  something that is not the admin's own active agent is refused (409). If the agent
+  already holds any lane, that is the only step: 303 to the client's callback with a
+  one-time `code`, the client's `state`, and `iss` (RFC 9207). Otherwise the page moves to
+  the **lane step** (decisions/0006).
+- `POST /oauth/authorize/lanes`: the lane step. The page lists only lanes the admin
+  administers (rule 7), shared ones ticked and private ones not, as on the invite form.
+  It carries a single-use ticket (`oauth_approvals`, hashed, 5 minutes) that holds the
+  validated request, so nothing about where the code goes can change here. Approving
+  makes the code with the ticked lanes in `lanes_json`; Cancel returns
+  `error=access_denied` to the client. Ticked lanes the admin doesn't administer are
+  dropped. Both pages' CSP `form-action` allows exactly the callback origin.
 - `POST /oauth/token`: `authorization_code` with PKCE S256 and the same `redirect_uri`.
   The code is claimed atomically (any failed attempt burns it), then the agent is
   registered (with no invite token) if it doesn't exist, and a **new connection** is added
   for it: a fresh token whose hash goes in `agent_connections`. Nothing is replaced, so
   signing in from a new session never disconnects Claude chat or another session
   (decisions/0005). An agent keeps at most `MAX_CONNECTIONS` (10); the next sign-in drops
-  the one used least recently. The token is returned once:
-  `{"access_token", "token_type": "Bearer"}`. Audit: `oauth-connect`.
+  the one used least recently. Then the code's lanes apply through `set_grant`, exactly
+  as an invite's lanes do on redemption: private lanes at once, shared lanes per §6
+  (pending or provisional). They only add rights, and a lane the admin no longer
+  administers is skipped. The token is returned once:
+  `{"access_token", "token_type": "Bearer"}`. Audit: `oauth-connect`, with the lanes.
 - Table `oauth_codes` (migration 11): `code_hash`, `owner`, `agent_id`, `display_name`,
-  `challenge`, `redirect_uri`, `expires_at` (5 minutes). No tokens are stored. Resetting
-  an admin deletes their unspent codes.
+  `challenge`, `redirect_uri`, `expires_at` (5 minutes), and (migration 13) `lanes_json`.
+  No tokens are stored. Resetting an admin deletes their unspent codes and lane tickets.
+- Table `oauth_approvals` (migration 13): `ticket_hash`, `owner`, `agent_id`,
+  `params_json`, `expires_at` (5 minutes).
 - Table `agent_connections` (migration 12): `token_hash`, `agent_id`, `created_at`,
   `last_seen_at`. Only hashes. Revoking the agent deletes its rows; a reconnect invite
   replaces only the invite token and leaves these alone.
-- Rights: a connection starts with no lanes. Lane changes follow §6.
+- Rights live on the agent, never the connection: a new agent gets the lanes ticked on
+  the lane step, a returning one keeps what it has. Every lane change follows §6.
 

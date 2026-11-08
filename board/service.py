@@ -327,6 +327,7 @@ def reset_admin(conn, admin):
     conn.execute("UPDATE invites SET status = 'cancelled' WHERE owner = ? AND status = 'open'",
                  (admin,))
     conn.execute("DELETE FROM oauth_codes WHERE owner = ?", (admin,))
+    conn.execute("DELETE FROM oauth_approvals WHERE owner = ?", (admin,))
     _audit(conn, "host", "admin-reset", "shared", admin=admin)
     return issue_setup_link(conn, admin)
 
