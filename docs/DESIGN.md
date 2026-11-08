@@ -1041,7 +1041,9 @@ any Claude Code session on any machine, reaches a deployed board.
   allowed (Claude's callbacks, loopback with a port, or `BOARD_OAUTH_REDIRECTS`).
 - `GET|POST /oauth/authorize`: the board's own page. The admin gives username, password
   and authenticator code and names the agent (default `claude-chat`). The login only proves
-  who they are; no session is created. Throttled like `/login`. A name already used by
+  who they are; no session is created. Throttled like `/login`, and a failed attempt is
+  committed before the error is returned, so it counts toward the same per-address login
+  lockout as `/login` (5 failures, 15 minutes). A name already used by
   something that is not the admin's own active agent is refused (409). On success: 303 to
   the client's callback with a one-time `code` and the client's `state`. The page's CSP
   `form-action` allows exactly that callback origin.

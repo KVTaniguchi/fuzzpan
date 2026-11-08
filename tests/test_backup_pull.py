@@ -141,8 +141,9 @@ def test_bad_settings_are_refused_before_anything_runs(env, name, value):
     assert not Path(e["SSH_LOG"]).exists()
 
 
-@pytest.mark.skipif(shutil.which("age", path="/usr/local/bin:/opt/homebrew/bin") is not None,
-                    reason="the script adds these folders to PATH, so a real age is found")
+@pytest.mark.skipif(shutil.which("age", path="/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
+                    is not None,
+                    reason="a real age is on the test PATH or the folders the script adds to it")
 def test_age_recipient_without_age_installed_is_refused(env):
     e, dest, tmp = env
     (tmp / "bin" / "age").unlink()
