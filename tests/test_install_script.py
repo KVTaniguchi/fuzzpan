@@ -235,6 +235,7 @@ def test_a_second_run_upgrades_keeps_env_backs_up_first_and_does_not_reprovision
     assert not any("provision" in line for line in c)
     assert not any(line.startswith("ufw") for line in c)
     assert LINK not in r.stdout
+    assert "== Upgraded" in r.stdout and "setup link" not in r.stdout
 
 
 def test_an_upgrade_stops_if_the_backup_fails(box):

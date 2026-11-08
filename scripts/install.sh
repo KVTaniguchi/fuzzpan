@@ -322,6 +322,23 @@ else
     say "python3 is not installed here, so the doctor was skipped. apt-get install -y python3, then: python3 $DIR/scripts/doctor.py"
 fi
 
+if [ "$UPGRADE" -eq 1 ]; then
+    cat <<EOF
+
+== Upgraded
+Your admins, agents, lanes and posts are unchanged. The backup taken before the
+upgrade is in the data volume as /data/pre-upgrade-*.db. It holds the same
+secrets as the database, so once the board looks right, delete it:
+  cd $DIR && docker compose exec board sh -c 'rm /data/pre-upgrade-*.db'
+Back up the board to YOUR computer, from a terminal there (not here):
+  curl -fsSLO https://raw.githubusercontent.com/$REPO/$REF/scripts/backup_pull.sh
+  BOARD_SSH=root@${DOMAIN} BOARD_REMOTE_DIR=$DIR sh backup_pull.sh
+To check any time: python3 $DIR/scripts/doctor.py
+EOF
+    log "done, upgrade (doctor exit $doctor_rc)"
+    exit "$doctor_rc"
+fi
+
 cat <<EOF
 
 == Next
