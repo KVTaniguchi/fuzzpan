@@ -20,7 +20,10 @@
     <p class="meta">Or type this key in by hand: <code>{{ details.secret }}</code></p>
     <form method="post">
       <p><strong>2. Choose a password and confirm the code.</strong></p>
+      <p><label>Username<br>
+        <input name="username" value="{{ details.admin }}" autocomplete="username" readonly></label></p>
       <p><input type="password" name="password" placeholder="Password (12+ characters)" autocomplete="new-password" minlength="12" required></p>
+      <p><input type="password" name="password_confirm" placeholder="Type the password again" autocomplete="new-password" minlength="12" required></p>
       <p><input name="code" placeholder="6-digit code from the app" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" required></p>
       <p><button>Finish setup</button></p>
     </form>
