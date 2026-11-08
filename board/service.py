@@ -40,6 +40,7 @@ INVITE_PREFIX = "inv_"
 INVITE_SECONDS = 3600
 MAX_NAME_CHARS = 80
 LAST_SEEN_INTERVAL = 60
+MAX_CONNECTIONS = 10  # OAuth connections kept per agent (decisions/0005)
 HUMAN_KINDS = {"decision", "approval", "stop"}
 POST_KINDS = {"note"} | HUMAN_KINDS
 
@@ -105,13 +106,37 @@ def issue_agent_token(conn, principal_id):
     return token
 
 
+def add_agent_connection(conn, principal_id):
+    """Make a token for one more OAuth connection of an agent (decisions/0005). It
+    replaces nothing, so other connections keep working. Past MAX_CONNECTIONS the
+    connection used least recently is dropped. Only the SHA-256 is stored."""
+    token = TOKEN_PREFIX + secrets.token_urlsafe(32)
+    conn.execute("INSERT INTO agent_connections (token_hash, agent_id, created_at) "
+                 "VALUES (?, ?, ?)", (_hash_token(token), principal_id, _now()))
+    conn.execute(
+        "DELETE FROM agent_connections WHERE agent_id = ? AND token_hash NOT IN ("
+        "SELECT token_hash FROM agent_connections WHERE agent_id = ? "
+        "ORDER BY COALESCE(last_seen_at, created_at) DESC, rowid DESC LIMIT ?)",
+        (principal_id, principal_id, MAX_CONNECTIONS))
+    return token
+
+
 def authenticate_token(conn, token):
-    """The agent holding this bearer token. Any failure is the same plain 401."""
+    """The agent holding this bearer token: its invite token or one of its OAuth
+    connections. Any failure is the same plain 401."""
     denied = BoardError(401, "invalid token")
     if not token:
         raise denied
+    token_hash = _hash_token(token)
     row = conn.execute("SELECT * FROM principals WHERE token_hash = ?",
-                       (_hash_token(token),)).fetchone()
+                       (token_hash,)).fetchone()
+    connection = None
+    if row is None:
+        connection = conn.execute("SELECT agent_id, last_seen_at FROM agent_connections "
+                                  "WHERE token_hash = ?", (token_hash,)).fetchone()
+        if connection is not None:
+            row = conn.execute("SELECT * FROM principals WHERE id = ?",
+                               (connection["agent_id"],)).fetchone()
     if row is None or row["kind"] != "agent" or row["status"] != "active":
         raise denied
     now = _now()
@@ -119,6 +144,10 @@ def authenticate_token(conn, token):
     # lock, which would serialize every agent request and block an admin's revoke.
     if row["last_seen_at"] is None or row["last_seen_at"] <= now - LAST_SEEN_INTERVAL:
         conn.execute("UPDATE principals SET last_seen_at = ? WHERE id = ?", (now, row["id"]))
+    if connection is not None and (connection["last_seen_at"] is None or
+                                   connection["last_seen_at"] <= now - LAST_SEEN_INTERVAL):
+        conn.execute("UPDATE agent_connections SET last_seen_at = ? WHERE token_hash = ?",
+                     (now, token_hash))
     return Caller(row["id"], "agent", row["owner"])
 
 
@@ -297,6 +326,7 @@ def reset_admin(conn, admin):
     # who made them.
     conn.execute("UPDATE invites SET status = 'cancelled' WHERE owner = ? AND status = 'open'",
                  (admin,))
+    conn.execute("DELETE FROM oauth_codes WHERE owner = ?", (admin,))
     _audit(conn, "host", "admin-reset", "shared", admin=admin)
     return issue_setup_link(conn, admin)
 
@@ -528,9 +558,10 @@ def _require_admin(caller):
         raise BoardError(403, "admin only")
 
 
-def register_agent(conn, caller, principal_id, display_name=None):
+def register_agent(conn, caller, principal_id, display_name=None, with_token=True):
     """Register an agent owned by the calling admin and return its bearer token,
-    which is shown this once."""
+    which is shown this once. with_token=False makes no invite token (an OAuth
+    sign-in gives the agent a connection token instead); "token" is then None."""
     _require_admin(caller)
     if not principal_id or not principal_id.replace("-", "").isalnum() or len(principal_id) > 64:
         raise BoardError(400, "id must be letters, digits, and hyphens")
@@ -539,7 +570,7 @@ def register_agent(conn, caller, principal_id, display_name=None):
     conn.execute("INSERT INTO principals (id, kind, owner, display_name, created_at)"
                  " VALUES (?, 'agent', ?, ?, ?)",
                  (principal_id, caller.id, display_name or principal_id, now_iso()))
-    token = issue_agent_token(conn, principal_id)
+    token = issue_agent_token(conn, principal_id) if with_token else None
     _audit(conn, caller.id, "register", caller.id, principal=principal_id)
     return {"id": principal_id, "owner": caller.id, "token": token}
 
@@ -550,9 +581,11 @@ def revoke_agent(conn, caller, principal_id):
                        (principal_id, caller.id)).fetchone()
     if row is None:
         raise not_found()
-    # The token hash goes too, so a revoked token is dead at rest as well.
+    # The token hashes go too, so revoked tokens are dead at rest as well: the invite
+    # token and every OAuth connection.
     conn.execute("UPDATE principals SET status = 'revoked', token_hash = NULL WHERE id = ?",
                  (principal_id,))
+    conn.execute("DELETE FROM agent_connections WHERE agent_id = ?", (principal_id,))
     # Its reconnect links are dead now, so they stop being listed as if they weren't.
     conn.execute("UPDATE invites SET status = 'cancelled' WHERE agent_id = ? AND "
                  "replaces_token = 1 AND status = 'open'", (principal_id,))

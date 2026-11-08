@@ -121,9 +121,11 @@ then appears in your chats (each chat still chooses whether to load it).
 3. The new agent has **no lane access yet**. Grant it lanes in Admin like any
    agent. Remove it there to cut chat off instantly.
 
-Approving a name that is already your own active agent replaces that agent's
-token, which disconnects whatever was using the old one. Use a new name to avoid
-that. See decisions/0004.
+Approving a name that is already your own active agent adds another connection
+to it; it does not disconnect anything already using that agent. So a new Claude
+Code session, or Claude chat signing in again, leaves the others working. An agent
+keeps up to 10 connections; past that, the one used least recently is dropped.
+Revoking the agent in Admin ends all of them. See decisions/0004 and 0005.
 
 ### Agents from other vendors (Gemini, ChatGPT, Grok)
 

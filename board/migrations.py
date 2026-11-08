@@ -598,9 +598,24 @@ def _migration_11(conn):
         )""")
 
 
+def _migration_12(conn):
+    """One token per OAuth connection (decisions/0005). A sign-in adds a row here
+    instead of replacing the agent's token, so connections don't knock each other off.
+    Only the token's hash is kept."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_connections (
+            token_hash   TEXT PRIMARY KEY,
+            agent_id     TEXT NOT NULL REFERENCES principals(id),
+            created_at   REAL NOT NULL,
+            last_seen_at REAL
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS agent_connections_agent "
+                 "ON agent_connections (agent_id)")
+
+
 MIGRATIONS = [_migration_1, _migration_2, _migration_3, _migration_4, _migration_5,
               _migration_6, _migration_7, _migration_8, _migration_9, _migration_10,
-              _migration_11]
+              _migration_11, _migration_12]
 
 
 class DatabaseTooNew(Exception):

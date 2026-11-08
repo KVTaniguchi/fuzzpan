@@ -8,8 +8,9 @@ Flow: the client finds us through the .well-known documents, is told where to se
 the admin, and the admin proves who they are (password and authenticator code) on
 our own page and approves a named agent. That makes a one-time code bound to the
 client's PKCE challenge and redirect address. The client spends the code at the
-token endpoint, which is the moment the agent is registered (or its token replaced)
-and the token is returned once. The new agent has no lane rights until an admin
+token endpoint, which is the moment the agent is registered (if new) and given a new
+connection token, returned once. A sign-in never replaces another connection's token
+(decisions/0005). The new agent has no lane rights until an admin
 grants them the usual way, so approving a connection grants nothing by itself.
 """
 
@@ -230,13 +231,13 @@ def install(app, public_base, render, throttle, client_key, sentence):
                 existing = conn.execute("SELECT kind, owner, status FROM principals "
                                         "WHERE id = ?", (agent,)).fetchone()
                 if existing is None:
-                    secret = service.register_agent(conn, admin, agent,
-                                                    row["display_name"])["token"]
-                elif (existing["kind"], existing["owner"], existing["status"]) == \
+                    service.register_agent(conn, admin, agent, row["display_name"],
+                                           with_token=False)
+                elif (existing["kind"], existing["owner"], existing["status"]) != \
                         ("agent", owner, "active"):
-                    secret = service.issue_agent_token(conn, agent)
-                else:
                     return _oauth_error("invalid_grant")
+                # A new connection, never a replacement: other sessions stay connected.
+                secret = service.add_agent_connection(conn, agent)
                 service._audit(conn, agent, "oauth-connect", owner,
                                reconnect=existing is not None)
                 return JSONResponse({"access_token": secret, "token_type": "Bearer"},
