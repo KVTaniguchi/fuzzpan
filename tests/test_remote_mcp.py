@@ -210,12 +210,88 @@ def test_cannot_take_over_someone_elses_agent(board):
     assert r.status_code == 409
 
 
-def test_reconnect_replaces_the_token_of_your_own_agent(board):
+def sign_in(board, agent="claude-chat"):
+    """A whole OAuth sign-in: approve, spend the code, return the access token."""
     verifier, challenge = pkce()
-    first = spend(board, parse_qs(urlsplit(approve(board, "alice", challenge).headers["location"]
-                                           ).query)["code"][0], verifier).json()["access_token"]
-    second = spend(board, parse_qs(urlsplit(approve(board, "alice", challenge).headers["location"]
-                                            ).query)["code"][0], verifier).json()["access_token"]
+    board.clock.advance(60)  # an earlier admin login may have spent the current code
+    r = approve(board, "alice", challenge, agent=agent)
+    assert r.status_code == 303, r.text
+    code = parse_qs(urlsplit(r.headers["location"]).query)["code"][0]
+    t = spend(board, code, verifier)
+    assert t.status_code == 200, t.text
+    return t.json()["access_token"]
+
+
+def works(board, token):
+    return rpc(TestClient(board.app, base_url=HTTPS), token, "tools/list").status_code == 200
+
+
+def test_signing_in_again_adds_a_connection_and_disconnects_nothing(board):
+    """decisions/0005: a new session signing in must not knock out Claude chat."""
+    chat = sign_in(board)
+    session = sign_in(board)
+    assert chat != session
+    assert works(board, chat) and works(board, session)
+    # Both are the same agent with the same rights.
+    assert board.grant("alice", "engineering", "claude-chat").status_code == 200
     c = TestClient(board.app, base_url=HTTPS)
-    assert rpc(c, first, "tools/list").status_code == 401
-    assert rpc(c, second, "tools/list").status_code == 200
+    for token in (chat, session):
+        assert not call(c, token, "board_read_lane", lane="engineering").get("isError")
+
+
+def test_signing_in_as_an_invited_agent_keeps_its_invite_token(board):
+    cli = board.register("alice", "coder")
+    oauth = sign_in(board, agent="coder")
+    assert works(board, cli.token) and works(board, oauth)
+
+
+def test_connections_are_capped_dropping_the_least_recently_used(board):
+    board.register("alice", "muse")
+    with service.connect(board.app.state.db_path) as conn:
+        first = service.add_agent_connection(conn, "muse")
+        tokens = []
+        for _ in range(service.MAX_CONNECTIONS - 1):
+            board.clock.advance(1)
+            tokens.append(service.add_agent_connection(conn, "muse"))
+    board.clock.advance(1)
+    assert works(board, first)  # used now, so it is no longer the stalest
+    with service.connect(board.app.state.db_path) as conn:
+        board.clock.advance(1)
+        newest = service.add_agent_connection(conn, "muse")
+        assert conn.execute("SELECT COUNT(*) FROM agent_connections WHERE agent_id='muse'"
+                            ).fetchone()[0] == service.MAX_CONNECTIONS
+    assert works(board, first) and works(board, newest)
+    assert not works(board, tokens[0])  # the one used least recently went
+    assert all(works(board, t) for t in tokens[1:])
+
+
+def test_revoking_ends_every_connection_at_once(board):
+    cli = board.register("alice", "claude-chat")
+    a, b = sign_in(board), sign_in(board)
+    board.admin("alice").post("/v1/admin/principals/claude-chat/revoke")
+    assert not any(works(board, t) for t in (cli.token, a, b))
+    with service.connect(board.app.state.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM agent_connections").fetchone()[0] == 0
+    # Signing in again can't bring a revoked agent back.
+    verifier, challenge = pkce()
+    board.clock.advance(60)
+    assert approve(board, "alice", challenge).status_code == 409
+
+
+def test_a_reconnect_invite_leaves_oauth_connections_alone(board):
+    cli = board.register("alice", "coder")
+    oauth = sign_in(board, agent="coder")
+    r = board.admin("alice").post("/v1/admin/principals/coder/reconnect")
+    code = r.json()["code"]
+    new = TestClient(board.app, base_url=HTTPS).post(f"/v1/invites/{code}/redeem").json()
+    assert not works(board, cli.token)
+    assert works(board, new["token"]) and works(board, oauth)
+
+
+def test_resetting_an_admin_voids_their_unspent_sign_in_codes(board):
+    verifier, challenge = pkce()
+    code = parse_qs(urlsplit(approve(board, "alice", challenge).headers["location"]
+                             ).query)["code"][0]
+    with service.connect(board.app.state.db_path) as conn:
+        service.reset_admin(conn, "alice")
+    assert spend(board, code, verifier).status_code == 400

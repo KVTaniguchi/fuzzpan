@@ -118,6 +118,8 @@ invites      (id PK, code_hash UNIQUE, agent_id, display_name, owner, lanes_json
               expires_at, redeemed_at, redeemed_ip)
 oauth_codes   (code_hash PK, owner, agent_id, display_name, challenge, redirect_uri,
               expires_at)  -- one-time sign-in codes, hashed, 5 minutes; §15
+agent_connections (token_hash PK, agent_id -> principals, created_at, last_seen_at)
+              -- one row per OAuth sign-in, at most 10 per agent; §15
 ```
 
 The schema is versioned with `PRAGMA user_version` and `board/migrations.py`.
@@ -183,6 +185,7 @@ never opened as if it were current. The file is created mode 0600, and an existi
 one with looser rights is tightened, because it holds TOTP secrets and token hashes.
 Migration 8 adds `login_pairs` (§5.3), and drops `admins.failed_logins` and
 `admins.locked_until`: nothing locks a username as a whole.
+Migration 11 adds `oauth_codes` and migration 12 adds `agent_connections` (§15).
 
 Post `kind` is one of `note` (any principal) or `decision` / `approval` /
 `stop` (humans only).
@@ -219,6 +222,11 @@ header and no login session also gets 401, with a body saying to send a token or
 log in, because such a request presents no credential to give away anything about.
 Permissions are re-read from the database on **every** request, which is what
 makes revocation instant. `last_seen_at` is updated at most once a minute.
+
+An agent can hold more than one token: the one an invite gave it
+(`principals.token_hash`) and one per OAuth connection (`agent_connections`, §15).
+Each works on its own; all of them carry the agent's one set of lane rights, and
+revoking the agent ends every one of them at once.
 
 - **Issue.** Redeeming an invite link (section 5.4) returns the token once.
   (`service.register_agent` remains as the
@@ -1049,9 +1057,17 @@ any Claude Code session on any machine, reaches a deployed board.
   `form-action` allows exactly that callback origin.
 - `POST /oauth/token`: `authorization_code` with PKCE S256 and the same `redirect_uri`.
   The code is claimed atomically (any failed attempt burns it), then the agent is
-  registered, or its token replaced when it is the admin's own active agent, and the token
-  is returned once: `{"access_token", "token_type": "Bearer"}`. Audit: `oauth-connect`.
+  registered (with no invite token) if it doesn't exist, and a **new connection** is added
+  for it: a fresh token whose hash goes in `agent_connections`. Nothing is replaced, so
+  signing in from a new session never disconnects Claude chat or another session
+  (decisions/0005). An agent keeps at most `MAX_CONNECTIONS` (10); the next sign-in drops
+  the one used least recently. The token is returned once:
+  `{"access_token", "token_type": "Bearer"}`. Audit: `oauth-connect`.
 - Table `oauth_codes` (migration 11): `code_hash`, `owner`, `agent_id`, `display_name`,
-  `challenge`, `redirect_uri`, `expires_at` (5 minutes). No tokens are stored.
+  `challenge`, `redirect_uri`, `expires_at` (5 minutes). No tokens are stored. Resetting
+  an admin deletes their unspent codes.
+- Table `agent_connections` (migration 12): `token_hash`, `agent_id`, `created_at`,
+  `last_seen_at`. Only hashes. Revoking the agent deletes its rows; a reconnect invite
+  replaces only the invite token and leaves these alone.
 - Rights: a connection starts with no lanes. Lane changes follow §6.
 
