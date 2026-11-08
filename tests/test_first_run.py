@@ -55,6 +55,29 @@ def test_a_failed_setup_sets_no_cookie_and_logs_nobody_in(board):
     assert http.get("/welcome", follow_redirects=False).status_code == 303
 
 
+def test_setup_page_names_the_username_and_asks_for_the_password_twice(board):
+    page = TestClient(board.app, base_url=HTTPS).get(f"/setup/{board.tokens['bob']}").text
+    # So a password manager saves the new password under the right username.
+    assert re.search(r'<input name="username" value="bob" autocomplete="username" readonly>',
+                     page)
+    assert 'name="password_confirm"' in page
+
+
+def test_mismatched_passwords_save_nothing_and_the_link_still_works(board):
+    http = TestClient(board.app, base_url=HTTPS)
+    code = pyotp.TOTP(board.totp_secret("bob")).at(int(board.clock.time()))
+    r = http.post(f"/setup/{board.tokens['bob']}", follow_redirects=False,
+                  data={"password": board.passwords["bob"], "code": code,
+                        "password_confirm": board.passwords["bob"] + "x"})
+    assert r.status_code == 400 and "did not match" in r.text and "set-cookie" not in r.headers
+    with service.connect(board.app.state.db_path) as c:
+        assert not service.is_onboarded(c, "bob")
+    r = http.post(f"/setup/{board.tokens['bob']}", follow_redirects=False,
+                  data={"password": board.passwords["bob"], "code": code,
+                        "password_confirm": board.passwords["bob"]})
+    assert r.status_code == 303 and r.headers["location"] == "/welcome"
+
+
 def test_a_second_tap_on_finish_setup_sets_no_cookie(board):
     finish(board, "bob")
     http, r = finish(board, "bob")

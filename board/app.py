@@ -443,8 +443,15 @@ def create_app(db_path, secure_cookies=True):
 
     @app.post("/setup/{token}")
     def setup_submit(token: str, request: Request, password: str = Form(...),
-                     code: str = Form(...), conn=get_db):
+                     code: str = Form(...), password_confirm: str | None = Form(None),
+                     conn=get_db):
         throttle(conn, request, "setup")
+        # The page always sends the confirmation; a script may leave it out. A mismatch
+        # saves nothing and leaves the link live, so a typo cannot become the password.
+        if password_confirm is not None and password_confirm != password:
+            return setup_view(request, conn, token, status=400,
+                              error="The two passwords did not match. Nothing was saved; "
+                                    "type them again.")
         try:
             name = service.complete_setup(conn, token, password, code)
         except BoardError as e:

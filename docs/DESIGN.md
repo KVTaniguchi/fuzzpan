@@ -246,9 +246,13 @@ The feed page uses a **session login per admin**: username, password and a
   admin, `BOARD_PUBLIC_URL/setup/<token>`. The token is random, stored only as a
   SHA-256 hash, valid 24 hours and works once. Viewing the page uses nothing up.
   The page offers an `otpauth://` link (for enrolling on the same phone), a QR
-  code (for a second device) and the secret as text. Submitting a password of at
-  least 12 characters and a correct code saves both together; a bad password or
-  code saves nothing and the link stays live. Finishing keeps the link's hash with
+  code (for a second device) and the secret as text. The form shows the username
+  in a read-only `autocomplete="username"` field, so a password manager saves the
+  new password under the right name, and asks for the password twice. Submitting a
+  password of at least 12 characters, a matching confirmation and a correct code
+  saves both together; a bad password or code, or a confirmation that does not
+  match, saves nothing and the link stays live. (The confirmation is checked when
+  sent; a script may omit it.) Finishing keeps the link's hash with
   no expiry, so opening it again, or a second tap on **Finish setup**, says setup is
   already done and links to login instead of looking like an error.
 - **Login.** The username is trimmed and lowercased before matching, because admin
