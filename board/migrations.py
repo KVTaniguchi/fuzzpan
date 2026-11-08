@@ -582,8 +582,25 @@ def _migration_10(conn):
                  "AND retention_days IS NULL")
 
 
+def _migration_11(conn):
+    """OAuth sign-in for remote MCP clients (Claude chat). A code is made when an admin
+    approves a connection and spent at the token endpoint, which is where the agent's
+    bearer token is made, so no token is ever stored. Only the code's hash is kept."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS oauth_codes (
+            code_hash    TEXT PRIMARY KEY,
+            owner        TEXT NOT NULL,
+            agent_id     TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            challenge    TEXT NOT NULL,
+            redirect_uri TEXT NOT NULL,
+            expires_at   REAL NOT NULL
+        )""")
+
+
 MIGRATIONS = [_migration_1, _migration_2, _migration_3, _migration_4, _migration_5,
-              _migration_6, _migration_7, _migration_8, _migration_9, _migration_10]
+              _migration_6, _migration_7, _migration_8, _migration_9, _migration_10,
+              _migration_11]
 
 
 class DatabaseTooNew(Exception):

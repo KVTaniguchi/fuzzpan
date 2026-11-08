@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from board import limits, service
+from board import limits, mcp_http, oauth, service
 from board.db import connect, init_db
 from board.service import BoardError
 
@@ -174,7 +174,8 @@ def create_app(db_path, secure_cookies=True):
         """The API always answers {"error": ...}. Everywhere else a person is
         reading, so they get a plain page with a way back, never raw JSON."""
         path = request.url.path
-        if path.startswith("/v1/") or path == "/healthz":
+        if path.startswith(("/v1/", "/mcp", "/oauth/token", "/oauth/register")) \
+                or path == "/healthz":
             return JSONResponse({"error": message}, status_code=status, headers=headers)
         who = await run_in_threadpool(session_who, request)
         back = "/admin" if who and path.startswith("/admin") else "/"
@@ -205,7 +206,8 @@ def create_app(db_path, secure_cookies=True):
             response = JSONResponse({"error": "cross-origin request refused"}, status_code=403)
         else:
             response = await call_next(request)
-        response.headers["Content-Security-Policy"] = CSP
+        if "Content-Security-Policy" not in response.headers:  # a route may set its own
+            response.headers["Content-Security-Policy"] = CSP
         # Not no-referrer: with that, browsers send "Origin: null" on form posts,
         # which the Origin check above (rightly) refuses, locking out every form.
         response.headers["Referrer-Policy"] = "same-origin"
@@ -326,6 +328,10 @@ def create_app(db_path, secure_cookies=True):
         """Links are built from BOARD_PUBLIC_URL when set, else from the request."""
         configured = os.environ.get("BOARD_PUBLIC_URL", "").strip().rstrip("/")
         return configured or str(request.base_url).rstrip("/")
+
+    mcp_http.install(app, public_base)
+    oauth.install(app, public_base, lambda *a, **k: render(*a, **k), throttle, client_key,
+                  sentence)
 
     def invite_response(request, made):
         return JSONResponse({**made, "url": f"{public_base(request)}/invite/{made['code']}"},
