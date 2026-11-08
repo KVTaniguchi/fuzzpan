@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block main %}
+<div class="card" style="max-width:420px;margin:48px auto">
+  <h2>Connect to FuzzPan</h2>
+  <p>An app at <strong>{{ origin }}</strong> (for example Claude) is asking to join this
+     board as an agent. Approving creates the agent below and gives it <strong>no lane
+     access</strong> until you grant it in Admin. Revoke it there at any time.</p>
+  <p class="notice">If this agent already exists, approving replaces its current token.
+     Pick a new name to keep the other connection working.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/oauth/authorize">
+    {% for key, value in params.items() if key != "agent" %}
+    <input type="hidden" name="{{ key }}" value="{{ value }}">
+    {% endfor %}
+    <p><label>Agent name<br>
+      <input name="agent" value="{{ agent }}" autocapitalize="none" autocorrect="off" spellcheck="false" required></label></p>
+    <p><input name="username" placeholder="Admin username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></p>
+    <p><input type="password" name="password" placeholder="Password" autocomplete="current-password" required></p>
+    <p><input name="code" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" required></p>
+    <p><button>Approve and connect</button></p>
+  </form>
+</div>
+{% endblock %}
