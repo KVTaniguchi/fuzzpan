@@ -527,7 +527,7 @@ def create_app(db_path, secure_cookies=True):
         pending = service.list_pending(conn, who)
         def count(name):  # a small whole number from the query string, else 0
             value = request.query_params.get(name, "")
-            return int(value) if value.isdigit() and len(value) < 4 else 0
+            return int(value) if value.isascii() and value.isdigit() and len(value) < 4 else 0
 
         saved, queued = count("saved"), count("queued")
         notice = grants_notice(saved, queued) \

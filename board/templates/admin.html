@@ -269,7 +269,7 @@
             <td><div class="cell"><div class="pair">
               <label class="tg"><input type="checkbox" name="read" value="{{ c.key }}"{% if c.read %} checked{% endif %}{% if not c.editable %} disabled{% endif %}{% if c.shared %} data-shared{% endif %} aria-label="{{ a.display_name }} can read {{ c.lane }}"><span>Read</span></label>
               <label class="tg"><input type="checkbox" name="post" value="{{ c.key }}"{% if c.post %} checked{% endif %}{% if not c.editable %} disabled{% endif %}{% if c.shared %} data-shared{% endif %} aria-label="{{ a.display_name }} can post to {{ c.lane }}"><span>Post</span></label></div>
-              {% if c.read or c.post %}<input type="hidden" name="was" value="{{ c.key }}|{{ 'r' if c.read }}{{ 'p' if c.post }}">{% endif %}
+              {% if c.editable and (c.read or c.post) %}<input type="hidden" name="was" value="{{ c.key }}|{{ 'r' if c.read }}{{ 'p' if c.post }}">{% endif %}
               {% if c.waiting %}<span class="waiting" title="{{ 'Waiting for another admin to approve' if c.waiting.status == 'pending' else 'In effect until another admin ratifies it' }}">{{ "pending" if c.waiting.status == "pending" else "to ratify" }}</span>{% endif %}
             </div></td>
             {% endfor %}

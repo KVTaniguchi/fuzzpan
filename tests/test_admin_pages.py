@@ -523,3 +523,50 @@ def test_the_grid_script_is_served_and_has_no_inline_script(board):
     html = board.admin("alice").get("/admin").text
     assert '<script src="/static/admin.js"' in html
     assert not re.search(r"<script(?![^>]*\bsrc=)", html)
+
+
+def submit_as_browser(board, admin):
+    """Load /admin and post the grid as a browser would with nothing changed:
+    checked boxes that are not disabled, plus every hidden `was` field."""
+    html = board.admin(admin).get("/admin").text
+    data = {"read": [], "post": [], "was": []}
+    for tag in re.findall(r"<input[^>]*>", html):
+        name = re.search(r'name="(read|post|was)"', tag)
+        if not name or re.search(r"\bdisabled\b", tag):
+            continue
+        if name.group(1) == "was" or re.search(r"\bchecked\b", tag):
+            data[name.group(1)].append(re.search(r'value="([^"]*)"', tag).group(1))
+    return board.admin(admin).post("/admin/grants", data=data, follow_redirects=False)
+
+
+def test_saving_leaves_lanes_the_admin_can_see_but_not_administer_alone(board):
+    # bob lets alice read his private lane, where alice's agent also holds a right.
+    # Those cells are disabled for alice; saving her page must not try to clear them.
+    agent = board.register("alice", "coder")
+    board.grant("bob", "bob-money", "alice", read=True, post=False)
+    board.grant("bob", "bob-money", "coder", read=True, post=False)
+    html = board.admin("alice").get("/admin").text
+    box = re.search(r'<input[^>]*name="read" value="bob-money\|coder"[^>]*>', html).group(0)
+    assert re.search(r"\bdisabled\b", box)
+    r = submit_as_browser(board, "alice")
+    assert r.status_code == 303 and r.headers["location"] == "/admin?saved=0&queued=0#access"
+    assert lanes_of(agent) == {"bob-money": {"read": True, "post": False}}
+
+
+def test_the_notice_ignores_digits_that_are_not_ascii(board):
+    page = board.admin("alice").get("/admin?saved=%C2%B2&queued=%D9%A3")
+    assert page.status_code == 200 and "Nothing to change." in page.text
+
+
+def test_other_admins_agents_have_no_revoke_or_reconnect_on_the_grid_page(board):
+    board.register("bob", "bobs-bot")
+    html = board.admin("alice").get("/admin").text
+    assert 'data-agent="bobs-bot"' in html
+    assert "/admin/revoke/bobs-bot" not in html and "/admin/reconnect/bobs-bot" not in html
+
+
+def test_a_very_long_display_name_can_wrap_on_the_card(board):
+    board.register("alice", "coder")
+    board.admin("alice")  # the display name is set at registration; check the CSS hook
+    html = board.admin("alice").get("/admin").text
+    assert ".who strong { font-size:16px; overflow-wrap:anywhere; }" in html

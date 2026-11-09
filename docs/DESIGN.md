@@ -572,6 +572,8 @@ These pages are server-rendered HTML with no JavaScript framework:
     waits for another admin, and a cell shows `pending` or `to ratify` meanwhile). The form also
     carries each cell's rights as the page showed them (`was`), so only cells the
     admin changed are applied and a stale page never overwrites someone else's change.
+    Cells on lanes the admin can see but does not administer are disabled and send
+    no `was`, so they are never part of a save.
     Every change is checked before any is applied; one refused change refuses the
     save. Without JavaScript this is all it does. `static/admin.js` adds a count
     of unsaved changes, a warning before leaving with some, and selecting several
