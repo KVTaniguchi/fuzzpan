@@ -30,8 +30,8 @@ def call(client, token, tool, **arguments):
 
 @pytest.fixture
 def agent(board):
-    a = board.register("alice", "muse")
-    assert board.grant("alice", "engineering", "muse", read=True, post=True).status_code == 200
+    a = board.register("alice", "helper-bot")
+    assert board.grant("alice", "engineering", "helper-bot", read=True, post=True).status_code == 200
     return a
 
 
@@ -69,7 +69,7 @@ def test_post_and_read_use_the_agents_own_rights(board, agent):
 
 def test_revocation_is_instant(board, agent):
     assert not call(agent.http, agent.token, "board_whoami").get("isError")
-    r = board.admin("alice").post("/v1/admin/principals/muse/revoke")
+    r = board.admin("alice").post("/v1/admin/principals/helper-bot/revoke")
     assert r.status_code == 200
     assert rpc(agent.http, agent.token, "tools/list").status_code == 401
 
@@ -274,19 +274,19 @@ def test_signing_in_as_an_invited_agent_keeps_its_invite_token(board):
 
 
 def test_connections_are_capped_dropping_the_least_recently_used(board):
-    board.register("alice", "muse")
+    board.register("alice", "helper-bot")
     with service.connect(board.app.state.db_path) as conn:
-        first = service.add_agent_connection(conn, "muse")
+        first = service.add_agent_connection(conn, "helper-bot")
         tokens = []
         for _ in range(service.MAX_CONNECTIONS - 1):
             board.clock.advance(1)
-            tokens.append(service.add_agent_connection(conn, "muse"))
+            tokens.append(service.add_agent_connection(conn, "helper-bot"))
     board.clock.advance(1)
     assert works(board, first)  # used now, so it is no longer the stalest
     with service.connect(board.app.state.db_path) as conn:
         board.clock.advance(1)
-        newest = service.add_agent_connection(conn, "muse")
-        assert conn.execute("SELECT COUNT(*) FROM agent_connections WHERE agent_id='muse'"
+        newest = service.add_agent_connection(conn, "helper-bot")
+        assert conn.execute("SELECT COUNT(*) FROM agent_connections WHERE agent_id='helper-bot'"
                             ).fetchone()[0] == service.MAX_CONNECTIONS
     assert works(board, first) and works(board, newest)
     assert not works(board, tokens[0])  # the one used least recently went

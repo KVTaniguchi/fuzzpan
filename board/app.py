@@ -21,6 +21,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from board import limits, mcp_http, oauth, service
+from board.admin_view import build_admin_view, grants_notice
 from board.db import connect, init_db
 from board.service import BoardError
 
@@ -520,11 +521,20 @@ def create_app(db_path, secure_cookies=True):
         who = page_admin(request, conn)
         if who is None:
             return to_login()
-        return render(request, "admin.html", who=who,
-                      agents=service.list_agents(conn, who),
-                      invites=service.list_invites(conn, who),
-                      lanes=service.list_admin_lanes(conn, who),
-                      pending=service.list_pending(conn, who),
+        agents = service.list_agents(conn, who)
+        invites = service.list_invites(conn, who)
+        lanes = service.list_admin_lanes(conn, who)
+        pending = service.list_pending(conn, who)
+        def count(name):  # a small whole number from the query string, else 0
+            value = request.query_params.get(name, "")
+            return int(value) if value.isascii() and value.isdigit() and len(value) < 4 else 0
+
+        saved, queued = count("saved"), count("queued")
+        notice = grants_notice(saved, queued) \
+            if "saved" in request.query_params or "queued" in request.query_params else None
+        return render(request, "admin.html", who=who, agents=agents, invites=invites,
+                      lanes=lanes, pending=pending, notice=notice,
+                      view=build_admin_view(agents, invites, lanes, pending),
                       audit=service.list_audit(conn, who, limit=50))
 
     def invite_form(request, conn, who, display_name="", ticked=None, error=None, status=200):
@@ -650,6 +660,37 @@ def create_app(db_path, secure_cookies=True):
             return to_login()
         service.set_grant(conn, who, lane, principal, can_read, can_post)
         return RedirectResponse("/admin", status_code=303)
+
+    def cell_of(text):
+        """(lane, agent) from a grid value like "household|coder", else None."""
+        lane, sep, agent = text.partition("|")
+        return (lane, agent) if sep and lane and agent else None
+
+    @app.post("/admin/grants")
+    def admin_grants(request: Request, read: list[str] = Form([]), post: list[str] = Form([]),
+                     was: list[str] = Form([]), conn=get_db):
+        """Save the lane grid. `was` records each cell's rights as the page showed
+        them ("household|coder|rp"), so only cells the admin changed are applied:
+        a cell somebody else changed since the page loaded is left alone."""
+        who = page_admin(request, conn)
+        if who is None:
+            return to_login()
+        before = {}
+        for value in was:
+            key, _, held = value.rpartition("|")
+            cell = cell_of(key)
+            if cell and held in ("r", "p", "rp"):
+                before[cell] = ("r" in held, "p" in held)
+        wants_read = {c for c in map(cell_of, read) if c}
+        wants_post = {c for c in map(cell_of, post) if c}
+        changes = []
+        for cell in sorted(set(before) | wants_read | wants_post):
+            after = (cell in wants_read, cell in wants_post)
+            if after != before.get(cell, (False, False)):
+                changes.append((*cell, *after))
+        done = service.set_grants(conn, who, changes)
+        return RedirectResponse(f"/admin?saved={done['applied'] + done['provisional']}"
+                                f"&queued={done['pending']}#access", status_code=303)
 
     @app.post("/admin/pending/{pending_id}/{decision}")
     def admin_resolve(pending_id: int, decision: str, request: Request, conn=get_db):

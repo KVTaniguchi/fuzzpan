@@ -1,15 +1,144 @@
 {% extends "base.html" %}
 {% block title %}Admin · FuzzPan{% endblock %}
+{% block mainattrs %} class="wide"{% endblock %}
+{% block head %}
+<style>
+  .admin [hidden] { display:none !important; }
+  .admin .top { display:flex; flex-wrap:wrap; gap:16px; justify-content:space-between;
+                align-items:flex-end; margin-bottom:32px; }
+  .admin h2.pagetitle { font-size:26px; line-height:1.15; margin:0 0 4px; letter-spacing:-.01em; }
+  .admin h3 { font-size:19px; line-height:1.2; margin:0; }
+  .admin h4 { font-size:14px; margin:0 0 8px; color:var(--muted); }
+  .admin section { margin-bottom:44px; }
+  .admin .sechead { display:flex; flex-wrap:wrap; gap:4px 16px; align-items:baseline;
+                    justify-content:space-between; margin-bottom:14px; }
+  .admin p.meta { margin:0; font-size:13px; }
+  .admin a.button { display:inline-flex; align-items:center; min-height:44px; padding:0 18px;
+                    border-radius:10px; font-weight:600; }
+  .admin .btn { display:inline-flex; align-items:center; justify-content:center; min-height:44px;
+                padding:0 16px; border-radius:10px; border:1px solid var(--line);
+                background:var(--soft); color:var(--fg); cursor:pointer; font-size:14px;
+                font-weight:500; }
+  .admin .btn:hover { border-color:var(--muted); }
+  .admin .btn.danger { color:var(--danger); }
+  .admin .btn.quiet { background:transparent; border-color:transparent; color:var(--muted); }
+  .admin .btn:focus-visible, .admin a.button:focus-visible, .admin summary:focus-visible,
+  .admin .tg input:focus-visible + span, .admin .pick:focus-visible { outline:2px solid var(--accent);
+                outline-offset:2px; }
+  .admin .btn[disabled] { opacity:.5; cursor:not-allowed; }
+  .admin .banner { margin:0 0 24px; padding:12px 16px; border-radius:12px; font-size:14px;
+                   border:1px solid var(--human);
+                   background:color-mix(in srgb, var(--human) 12%, var(--card)); }
+  .admin .panel { background:var(--card); border:1px solid var(--line); border-radius:16px;
+                  padding:20px; }
+  .admin .attention { border-color:var(--warn); }
+  .admin ul.plain { list-style:none; margin:12px 0 0; padding:0; }
+  .admin li.pend, .admin li.unused { display:flex; flex-wrap:wrap; gap:8px 16px;
+                  justify-content:space-between; align-items:center; padding:12px 0;
+                  border-top:1px solid var(--line); }
+  .admin li.pend:first-child, .admin li.unused:first-child { border-top:0; }
+  .admin .cards { display:grid; gap:16px;
+                  grid-template-columns:repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+  .admin .agent { background:var(--card); border:1px solid var(--line); border-radius:16px;
+                  padding:20px; display:flex; flex-direction:column; gap:16px; }
+  .admin .agent-head { display:flex; align-items:center; gap:12px; }
+  .admin .who { display:flex; flex-direction:column; min-width:0; flex:1; }
+  .admin .who strong { font-size:16px; overflow-wrap:anywhere; }
+  .admin .av { width:44px; height:44px; flex:none; border-radius:12px; display:flex;
+               align-items:center; justify-content:center; font-weight:600; font-size:18px;
+               color:var(--accent);
+               background:color-mix(in srgb, var(--accent) 16%, var(--card)); }
+  .admin .pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600;
+                 padding:4px 10px; border-radius:999px; flex:none; }
+  .admin .pill::before { content:""; width:8px; height:8px; border-radius:50%;
+                         background:currentColor; }
+  .admin .pill.ok { color:var(--human); background:color-mix(in srgb, var(--human) 14%, transparent); }
+  .admin .pill.wait { color:var(--warn); background:color-mix(in srgb, var(--warn) 14%, transparent); }
+  .admin .pill.off { color:var(--danger); background:color-mix(in srgb, var(--danger) 14%, transparent); }
+  .admin .tag { font-size:12px; padding:2px 8px; border-radius:6px; background:var(--soft); }
+  .admin .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .admin .lc { font-size:13px; padding:4px 10px; border-radius:8px; background:var(--soft);
+               border:1px solid var(--line); }
+  .admin .lc .ro { color:var(--warn); }
+  .admin .actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:auto; }
+  .admin .unusedbox { margin-top:20px; }
+  .admin .matrix { border-collapse:collapse; min-width:1120px; }
+  .admin .matrix th, .admin .matrix td { padding:8px 12px; border-bottom:1px solid var(--line);
+                  vertical-align:middle; text-align:left; font-weight:normal; }
+  .admin .matrix thead th { vertical-align:top; padding-top:14px; padding-bottom:12px; }
+  .admin .matrix tbody tr:last-child > * { border-bottom:0; }
+  .admin .matrix tr:target > *, .admin .matrix tr.picked > * {
+                  background:color-mix(in srgb, var(--accent) 10%, var(--card)); }
+  .admin .rowhead { display:flex; align-items:center; gap:12px; min-width:220px; }
+  .admin .lanehead { display:flex; flex-direction:column; gap:4px; }
+  .admin .lanehead a { font-weight:600; }
+  .admin .scope { font-size:11px; font-weight:600; padding:2px 8px; border-radius:6px;
+                  background:var(--soft); align-self:flex-start; }
+  .admin .pick { width:20px; height:20px; accent-color:var(--accent); flex:none; cursor:pointer; }
+  .admin .cell { display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
+  .admin .pair { display:flex; gap:6px; }
+  .admin .dpanel td:first-child { white-space:pre; }
+  .admin .tg { position:relative; display:inline-flex; }
+  .admin .tg input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0;
+                     cursor:pointer; }
+  .admin .tg span { display:inline-flex; align-items:center; justify-content:center; min-width:60px;
+                    min-height:44px; padding:0 10px; border:1px solid var(--line); border-radius:8px;
+                    font-size:13px; font-weight:500; color:var(--muted); }
+  .admin .tg input:checked + span { color:var(--fg); border-color:var(--accent);
+                    background:color-mix(in srgb, var(--accent) 16%, transparent); }
+  .admin .tg input:checked + span::before { content:"\2713\00a0"; }
+  .admin .tg input:disabled + span { opacity:.55; }
+  .admin .tg.chg span { box-shadow:0 0 0 2px var(--warn); }
+  .admin .waiting { font-size:12px; font-weight:600; color:var(--warn); }
+  .admin .bulk { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; margin-bottom:12px;
+                 padding:12px 16px; border-radius:12px; border:1px solid var(--accent);
+                 background:color-mix(in srgb, var(--accent) 10%, var(--card)); }
+  .admin .bulk .tg span { min-height:44px; border-radius:999px; padding:0 14px; }
+  .admin .savebar { position:sticky; bottom:12px; z-index:5; display:flex; flex-wrap:wrap; gap:8px 16px;
+                    align-items:center; justify-content:space-between; margin-top:12px;
+                    padding:10px 10px 10px 18px; background:var(--card);
+                    border:1px solid var(--line); border-radius:14px;
+                    box-shadow:0 8px 28px rgba(0,0,0,.25); }
+  .admin .save-btn { min-height:44px; padding:0 20px; border-radius:10px; font-weight:600; }
+  .admin .save-btn[disabled] { opacity:.5; cursor:not-allowed; }
+  .admin details > summary { list-style:none; cursor:pointer; display:flex; flex-wrap:wrap;
+                    align-items:center; gap:4px 14px; min-height:56px; padding:12px 18px;
+                    background:var(--card); border:1px solid var(--line); border-radius:14px; }
+  .admin details > summary::-webkit-details-marker { display:none; }
+  .admin details > summary::before { content:""; width:8px; height:8px; flex:none;
+                    border-right:2px solid var(--muted); border-top:2px solid var(--muted);
+                    transform:rotate(45deg); transition:transform .15s ease; }
+  .admin details[open] > summary::before { transform:rotate(135deg); }
+  .admin details[open] > summary { border-bottom-left-radius:0; border-bottom-right-radius:0; }
+  .admin details > summary h3 { font-size:16px; }
+  .admin .dpanel { background:var(--card); border:1px solid var(--line); border-top:0;
+                   border-radius:0 0 14px 14px; padding:4px 18px 12px; }
+  .admin .grow { flex:1 1 auto; }
+  .admin details.revoked { margin-top:16px; }
+  .admin details.revoked > summary { min-height:44px; }
+  @media (prefers-reduced-motion: reduce) { .admin details > summary::before { transition:none; } }
+</style>
+{% endblock %}
 {% block main %}
-<p><a class="button" href="/admin/invite">Invite an agent</a></p>
+<div class="admin">
+
+<div class="top">
+  <div>
+    <h2 class="pagetitle">Agent access</h2>
+    <p class="meta">{{ view.summary }}</p>
+  </div>
+  <a class="button" href="/admin/invite">Invite an agent</a>
+</div>
+
+{% if notice %}<p class="banner" role="status">{{ notice }}</p>{% endif %}
 
 {% if pending %}
-<section class="card">
+<section class="panel attention" aria-label="Approvals">
   <h3>Waiting on approval</h3>
-  <div class="scroll"><table>
+  <ul class="plain">
     {% for p in pending %}
-    <tr>
-      <td>{{ p.lane }} · {{ p.principal }}<br>
+    <li class="pend">
+      <div>{{ p.lane }} · {{ p.principal }}<br>
         {% if p.upgrade_reason %}
         <span class="meta">{{ p.principal }} {{ (p.before, p.after, "upgrade")|rights_change }}
         · raised when the board was upgraded</span><br>
@@ -18,75 +147,163 @@
         {% else %}
         <span class="meta">{{ p.principal }} {{ (p.before, p.after, p.status)|rights_change }}
         · {{ p.status }} · asked by {{ p.requested_by }}</span>
-        {% endif %}</td>
-      <td>{% if p.requested_by != who.id %}
-        <form class="inline" method="post" action="/admin/pending/{{ p.id }}/approve"><button>{{ "Ratify" if p.status == "provisional" else "Approve" }}</button></form>
-        <form class="inline" method="post" action="/admin/pending/{{ p.id }}/reject"><button>Reject</button></form>
-      {% elif not p.upgrade_reason %}<span class="meta">waiting on another admin</span>{% endif %}</td>
-    </tr>
+        {% endif %}</div>
+      <div class="actions">{% if p.requested_by != who.id %}
+        <form class="inline" method="post" action="/admin/pending/{{ p.id }}/approve"><button class="btn">{{ "Ratify" if p.status == "provisional" else "Approve" }}</button></form>
+        <form class="inline" method="post" action="/admin/pending/{{ p.id }}/reject"><button class="btn danger">Reject</button></form>
+      {% elif not p.upgrade_reason %}<span class="meta">waiting on another admin</span>{% endif %}</div>
+    </li>
     {% endfor %}
-  </table></div>
+  </ul>
 </section>
+<div style="height:44px"></div>
 {% endif %}
 
-<section class="card">
-  <h3>Agents</h3>
-  <div class="scroll"><table>
-    <tr><th>Agent</th><th>Status</th><th>Lanes</th></tr>
-    {% for a in agents %}
-    <tr data-agent="{{ a.id }}">
-      <td>{{ a.display_name }}<br><span class="meta">{{ a.id }}{% if a.owner != who.id %} · {{ a.owner }}'s{% endif %}</span>
-        {% if a.owner == who.id and a.status == "active" %}<br>
-        <form class="inline" method="post" action="/admin/reconnect/{{ a.id }}"><button>Reconnect</button></form>
-        <form class="inline" method="post" action="/admin/revoke/{{ a.id }}"><button>Revoke</button></form>{% endif %}</td>
-      <td>{{ "revoked" if a.status == "revoked" else a.connection }}</td>
-      <td>{% for l in a.lanes %}{{ l.slug }} ({{ "r" if l.read }}{{ "p" if l.post }}){% if not loop.last %}, {% endif %}{% else %}<span class="meta">none</span>{% endfor %}</td></tr>
-    {% else %}
-    <tr><td colspan="3" class="meta">No agents yet. Use Invite an agent above.</td></tr>
-    {% endfor %}
-  </table></div>
+<section aria-label="Agents">
+  <div class="sechead">
+    <h3>Agents</h3>
+    <p class="meta">Most access first.</p>
+  </div>
+  {% for a in view.active %}{% if loop.first %}<div class="cards">{% endif %}
+    <article class="agent" data-agent="{{ a.id }}">
+      <div class="agent-head">
+        <span class="av" aria-hidden="true">{{ (a.display_name or a.id)[:1]|upper }}</span>
+        <div class="who"><strong>{{ a.display_name }}</strong>
+          <span class="meta">{{ a.id }}</span></div>
+        <span class="pill {{ 'ok' if a.connection == 'connected' else 'wait' }}">{{ "Connected" if a.connection == "connected" else "Waiting to connect" }}</span>
+      </div>
+      <div>
+        <p class="meta" style="margin:0 0 8px">Access to {{ a.lanes|length }} of {{ lanes|length }} lanes
+          {% if a.owner != who.id %}<span class="tag">{{ a.owner }}'s</span>{% endif %}</p>
+        <div class="chips">
+          {% for l in a.lanes %}<span class="lc">{{ l.slug }}{% if l.read and not l.post %} <span class="ro">· read only</span>{% elif l.post and not l.read %} <span class="ro">· post only</span>{% endif %}</span>
+          {% else %}<span class="meta">No lanes yet</span>{% endfor %}
+        </div>
+      </div>
+      <div class="actions">
+        <a class="btn" href="#row-{{ a.id }}">Edit access</a>
+        {% if a.owner == who.id %}
+        <form class="inline" method="post" action="/admin/reconnect/{{ a.id }}"><button class="btn quiet">Reconnect</button></form>
+        <form class="inline" method="post" action="/admin/revoke/{{ a.id }}"><button class="btn quiet danger">Revoke</button></form>
+        {% endif %}
+      </div>
+    </article>
+  {% if loop.last %}</div>{% endif %}
+  {% else %}
+    {% if not view.revoked %}<p class="meta">No agents yet. Use Invite an agent above.</p>{% endif %}
+  {% endfor %}
+
   {% if invites %}
-  <h4>Links not used yet</h4>
-  <div class="scroll"><table>
-    {% for i in invites %}
-    <tr><td>{{ i.display_name }}<br><span class="meta">{{ "reconnect link" if i.kind == "reconnect" else "new agent" }}</span></td>
-      <td class="actions"><form class="inline" method="post" action="/admin/invites/{{ i.id }}/cancel"><button>Cancel</button></form></td></tr>
-    {% endfor %}
-  </table></div>
+  <div class="unusedbox">
+    <h4>Links not used yet</h4>
+    <div class="panel">
+      <ul class="plain" style="margin:0">
+        {% for i in invites %}
+        <li class="unused">
+          <div>{{ i.display_name }}<br><span class="meta">{{ "reconnect link" if i.kind == "reconnect" else "new agent" }}</span></div>
+          <form class="inline" method="post" action="/admin/invites/{{ i.id }}/cancel"><button class="btn quiet danger">Cancel</button></form>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if view.revoked %}
+  <details class="revoked">
+    <summary><span class="grow">{{ view.revoked|length }} revoked {{ "agent" if view.revoked|length == 1 else "agents" }}</span></summary>
+    <div class="dpanel">
+      <ul class="plain" style="margin:0">
+        {% for a in view.revoked %}
+        <li class="unused">
+          <div>{{ a.display_name }}<br><span class="meta">{{ a.id }}{% if a.owner != who.id %} · {{ a.owner }}'s{% endif %}</span></div>
+          <span class="pill off">revoked</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </details>
   {% endif %}
 </section>
 
-<section class="card">
-  <h3>Lanes</h3>
-  <div class="scroll"><table>
-    <tr><th>Lane</th><th>Scope</th><th>Members (read / post)</th></tr>
-    {% for l in lanes %}
-    <tr><td><a href="/lanes/{{ l.slug }}">{{ l.slug }}</a></td><td>{{ l.scope }}</td>
-      <td>{% for g in l.grants %}{{ g.principal }} ({{ "r" if g.read }}{{ "p" if g.post }}){% if not loop.last %}, {% endif %}{% else %}<span class="meta">none</span>{% endfor %}</td></tr>
-    {% endfor %}
-  </table></div>
-  {% set active = agents|selectattr("status", "equalto", "active")|list %}
-  {% if active %}
-  <form class="row" method="post" action="/admin/grant">
-    <select name="lane" aria-label="Lane">{% for l in lanes if l.administers %}<option>{{ l.slug }}</option>{% endfor %}</select>
-    <select name="principal" aria-label="Agent">{% for a in active %}<option value="{{ a.id }}">{{ a.id }} ({{ a.owner }})</option>{% endfor %}</select>
-    <label><input type="checkbox" name="can_read" value="true"> read</label>
-    <label><input type="checkbox" name="can_post" value="true"> post</label>
-    <button>Set rights</button>
-    <div class="meta">Unchecking both removes the agent from the lane. Adding to a shared lane needs another admin.</div>
+<section id="access" aria-label="Lanes">
+  <div class="sechead">
+    <h3>Lanes</h3>
+    <p class="meta">Tick read and post for each agent and lane, then save once.</p>
+  </div>
+  {% if view.active %}
+  <form id="grants" method="post" action="/admin/grants">
+    <div class="bulk" id="bulk" hidden>
+      <strong id="bulk-count">0 agents selected</strong>
+      <span class="meta">on lanes</span>
+      {% for c in view.columns if c.administers %}
+      <label class="tg"><input type="checkbox" data-bulk-lane="{{ c.slug }}"><span>{{ c.slug }}</span></label>
+      {% endfor %}
+      <span class="meta">set to</span>
+      <button type="button" class="btn" data-bulk="r">Read only</button>
+      <button type="button" class="btn" data-bulk="rp">Read &amp; post</button>
+      <button type="button" class="btn danger" data-bulk="none">No access</button>
+      <button type="button" class="btn quiet" data-bulk-clear>Clear selection</button>
+    </div>
+    <div class="panel" style="padding:0;overflow:hidden">
+      <div class="scroll"><table class="matrix">
+        <thead><tr>
+          <th scope="col"><div class="rowhead">
+            <input type="checkbox" class="pick" data-pick-all aria-label="Select all agents" hidden>
+            <span class="meta">Agent</span></div></th>
+          {% for c in view.columns %}
+          <th scope="col"><div class="lanehead">
+            <a href="/lanes/{{ c.slug }}">{{ c.slug }}</a>
+            <span class="scope">{{ "Shared" if c.shared else c.scope ~ " only" }}</span>
+            <span class="meta">{{ c.members }}</span></div></th>
+          {% endfor %}
+        </tr></thead>
+        <tbody>
+          {% for r in view.rows %}{% set a = r.agent %}
+          <tr id="row-{{ a.id }}">
+            <th scope="row"><div class="rowhead">
+              <input type="checkbox" class="pick" data-pick="{{ a.id }}" aria-label="Select {{ a.display_name }}" hidden>
+              <span class="who"><strong>{{ a.display_name }}</strong>
+                <span class="meta">{{ a.id }}{% if a.owner != who.id %} · {{ a.owner }}'s{% endif %}</span></span></div></th>
+            {% for c in r.cells %}
+            <td><div class="cell"><div class="pair">
+              <label class="tg"><input type="checkbox" name="read" value="{{ c.key }}"{% if c.read %} checked{% endif %}{% if not c.editable %} disabled{% endif %}{% if c.shared %} data-shared{% endif %} aria-label="{{ a.display_name }} can read {{ c.lane }}"><span>Read</span></label>
+              <label class="tg"><input type="checkbox" name="post" value="{{ c.key }}"{% if c.post %} checked{% endif %}{% if not c.editable %} disabled{% endif %}{% if c.shared %} data-shared{% endif %} aria-label="{{ a.display_name }} can post to {{ c.lane }}"><span>Post</span></label></div>
+              {% if c.editable and (c.read or c.post) %}<input type="hidden" name="was" value="{{ c.key }}|{{ 'r' if c.read }}{{ 'p' if c.post }}">{% endif %}
+              {% if c.waiting %}<span class="waiting" title="{{ 'Waiting for another admin to approve' if c.waiting.status == 'pending' else 'In effect until another admin ratifies it' }}">{{ "pending" if c.waiting.status == "pending" else "to ratify" }}</span>{% endif %}
+            </div></td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    <div class="savebar">
+      <span class="meta" id="dirty" aria-live="polite">Changes are saved together. Adding an agent to a shared lane needs another admin.</span>
+      <button class="primary save-btn" id="save">Save changes</button>
+    </div>
   </form>
   {% else %}
   <p class="meta">No active agents to give rights to yet.</p>
   {% endif %}
 </section>
 
-<section class="card">
-  <h3>Audit log</h3>
-  <div class="scroll"><table>
-    {% for e in audit %}
-    <tr><td class="meta">{{ e.ts }}</td><td>{{ e.actor }}</td><td>{{ e.action }}</td>
-      <td class="meta" style="overflow-wrap:anywhere">{{ e.detail|tojson }}</td></tr>
-    {% endfor %}
-  </table></div>
+<section aria-label="Audit log">
+  <details>
+    <summary>
+      <h3>Audit log</h3>
+      <span class="meta grow">{% if audit %}Latest: {{ audit[0].actor }} · {{ audit[0].action }}{% else %}No events yet{% endif %}</span>
+      <span class="meta">{{ audit|length }} recent {{ "event" if audit|length == 1 else "events" }}</span>
+    </summary>
+    <div class="dpanel"><div class="scroll"><table>
+      {% for e in audit %}
+      <tr><td class="meta">{{ e.ts }}</td><td>{{ e.actor }}</td><td>{{ e.action }}</td>
+        <td class="meta" style="overflow-wrap:anywhere">{{ e.detail|tojson }}</td></tr>
+      {% endfor %}
+    </table></div></div>
+  </details>
 </section>
+
+</div>
+<script src="/static/admin.js" defer></script>
 {% endblock %}

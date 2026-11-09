@@ -105,8 +105,8 @@ def test_list_agents_never_returns_other_admins_private_lanes(board):
 
 def test_agent_shows_waiting_then_connected(board):
     agent = board.register("alice", "coder")
-    row = lambda: re.search(r'<tr[^>]*data-agent="coder".*?</tr>',
-                            board.admin("alice").get("/admin").text, re.S).group(0)
+    row = lambda: re.search(r'<article[^>]*data-agent="coder".*?</article>',
+                            board.admin("alice").get("/admin").text, re.S).group(0).lower()
     assert "waiting" in row() and "connected" not in row()
     assert agent.request("GET", "/v1/me").status_code == 200
     assert "connected" in row() and "waiting" not in row()
@@ -179,9 +179,10 @@ def test_no_key_register_or_token_wording_remains(board):
 def test_pages_work_at_phone_width(board):
     # No horizontal scrolling at 375px: tables scroll inside their own box,
     # and long values wrap instead of widening the page.
+    board.register("alice", "coder")
     html = board.admin("alice").get("/admin").text
     assert "overflow-x:auto" in html and "overflow-wrap:anywhere" in html
-    assert html.count('class="scroll"') >= 2  # agents and lanes tables
+    assert html.count('class="scroll"') >= 2  # the lane grid and the audit log
 
 
 def test_copy_script_is_served_and_the_csp_allows_it(board):
@@ -214,14 +215,13 @@ def test_words_wrap_between_words_not_mid_word(board):
     assert not re.search(r"(?<![.\w-])body\s*\{[^}]*anywhere", html)
 
 
-def test_revoke_comes_before_the_lanes_cell(board):
-    # Reachable at phone width without scrolling a table sideways.
+def test_an_agents_actions_sit_on_its_card(board):
+    # Revoke and Reconnect are on the agent's card, not off to the side of a wide table.
     board.register("alice", "coder")
-    row = re.search(r'<tr[^>]*data-agent="coder".*?</tr>',
-                    board.admin("alice").get("/admin").text, re.S).group(0)
-    assert row.index("/admin/revoke/coder") < row.index("<td>", row.index("<td>") + 1) \
-        < row.rindex("<td>")
-    assert "nowrap" not in board.admin("alice").get("/admin").text
+    html = board.admin("alice").get("/admin").text
+    card = re.search(r'<article[^>]*data-agent="coder".*?</article>', html, re.S).group(0)
+    assert "/admin/revoke/coder" in card and "/admin/reconnect/coder" in card
+    assert "nowrap" not in html
 
 
 def test_approvals_are_written_in_plain_words(board):
@@ -360,3 +360,213 @@ def test_revoking_leaves_other_agents_invites_alone(board):
     board.invite("alice", "newcomer", {})
     alice.post("/v1/admin/principals/bot/revoke")
     assert sorted(i["agent_id"] for i in alice.get("/v1/admin/invites").json()) == ["newcomer", "other"]
+
+
+# --- The agent list and the lane grid ----------------------------------------
+
+def save_grid(board, admin, read=(), post=(), was=()):
+    """Submit the lane grid the way a browser does: ticked boxes plus what the
+    page showed when it loaded."""
+    data = {"read": list(read), "post": list(post), "was": list(was)}
+    return board.admin(admin).post("/admin/grants", data=data, follow_redirects=False)
+
+
+def lanes_of(agent):
+    return agent.request("GET", "/v1/me").json()["lanes"]
+
+
+def test_agents_with_the_most_access_come_first(board):
+    board.register("alice", "aaa-idle")
+    busy = board.register("alice", "zzz-busy")
+    board.grant("alice", "household", "zzz-busy")
+    board.grant("alice", "alice-money", "zzz-busy")
+    html = board.admin("alice").get("/admin").text
+    assert html.index('data-agent="zzz-busy"') < html.index('data-agent="aaa-idle"')
+    assert lanes_of(busy)
+
+
+def test_the_view_orders_agents_and_lines_up_the_grid():
+    from board.admin_view import build_admin_view
+    lanes = [
+        {"slug": "bob-money", "scope": "bob", "administers": False, "grants": []},
+        {"slug": "household", "scope": "shared", "administers": True,
+         "grants": [{"principal": "b", "read": True, "post": False}]},
+    ]
+    agents = [
+        {"id": "a", "display_name": "A", "owner": "alice", "status": "active",
+         "connection": "waiting", "lanes": []},
+        {"id": "b", "display_name": "B", "owner": "alice", "status": "active",
+         "connection": "connected", "lanes": [{"slug": "household", "read": True, "post": False}]},
+        {"id": "c", "display_name": "C", "owner": "alice", "status": "revoked",
+         "connection": "connected", "lanes": []},
+    ]
+    view = build_admin_view(agents, [{"id": 1}], lanes, [])
+    assert [a["id"] for a in view["active"]] == ["b", "a"]
+    assert [a["id"] for a in view["revoked"]] == ["c"]
+    assert [c["slug"] for c in view["columns"]] == ["household", "bob-money"]  # shared first
+    cells = {c["lane"]: c for c in view["rows"][0]["cells"]}
+    assert cells["household"]["read"] and not cells["household"]["post"]
+    assert cells["household"]["editable"] and not cells["bob-money"]["editable"]
+    assert view["summary"] == "1 connected · 1 waiting to connect · 1 link not used yet · 1 revoked"
+
+
+def test_saving_the_grid_applies_every_changed_cell_at_once(board):
+    agent = board.register("alice", "coder")
+    r = save_grid(board, "alice", read=["alice-money|coder", "household|coder"],
+                  post=["household|coder"])
+    assert r.status_code == 303 and r.headers["location"] == "/admin?saved=2&queued=0#access"
+    assert lanes_of(agent) == {"alice-money": {"read": True, "post": False},
+                               "household": {"read": True, "post": True}}
+
+
+def test_read_and_post_are_separate_rights_in_the_grid(board):
+    agent = board.register("alice", "coder")
+    save_grid(board, "alice", post=["alice-money|coder"])
+    assert lanes_of(agent)["alice-money"] == {"read": False, "post": True}
+
+
+def test_the_grid_ticks_what_the_agent_holds(board):
+    board.register("alice", "coder")
+    board.grant("alice", "household", "coder", read=True, post=False)
+    html = board.admin("alice").get("/admin").text
+    def box(right):
+        return re.search(rf'<input[^>]*name="{right}" value="household\|coder"[^>]*>', html).group(0)
+    assert re.search(r"\bchecked\b", box("read")) and not re.search(r"\bchecked\b", box("post"))
+    assert 'name="was" value="household|coder|r"' in html
+
+
+def test_unticking_a_box_the_page_showed_removes_that_right(board):
+    agent = board.register("alice", "coder")
+    board.grant("alice", "alice-money", "coder")
+    save_grid(board, "alice", read=["alice-money|coder"], was=["alice-money|coder|rp"])
+    assert lanes_of(agent) == {"alice-money": {"read": True, "post": False}}
+    save_grid(board, "alice", was=["alice-money|coder|r"])
+    assert lanes_of(agent) == {}
+
+
+def test_a_cell_changed_since_the_page_loaded_is_left_alone(board):
+    # The page was loaded when coder held nothing; coder has since been given
+    # household. Saving that old page without touching it must not undo the grant.
+    agent = board.register("alice", "coder")
+    board.grant("alice", "household", "coder")
+    r = save_grid(board, "alice")
+    assert r.headers["location"] == "/admin?saved=0&queued=0#access"
+    assert lanes_of(agent) == {"household": {"read": True, "post": True}}
+
+
+def test_widening_a_shared_lane_in_the_grid_waits_for_the_other_admin(board):
+    agent = board.register("alice", "coder")
+    board.admin("bob")  # onboarded: alice's change is now a request
+    r = save_grid(board, "alice", read=["household|coder"])
+    assert r.headers["location"] == "/admin?saved=0&queued=1#access"
+    assert lanes_of(agent) == {}
+    page = board.admin("alice").get(r.headers["location"].split("#")[0]).text
+    assert "1 change on shared lanes is waiting for another admin to approve." in page
+    assert '<span class="waiting"' in page and ">pending</span>" in page
+    assert "coder wants read only (now no access)" in board.admin("bob").get("/admin").text
+
+
+def test_the_grid_cannot_touch_lanes_the_admin_does_not_administer(board):
+    agent = board.register("alice", "coder")
+    r = save_grid(board, "alice", read=["alice-money|coder", "bob-money|coder"])
+    assert r.status_code == 404
+    assert lanes_of(agent) == {}  # the allowed cell was not applied either
+
+
+def test_the_grid_cannot_grant_to_a_revoked_agent_or_a_non_agent(board):
+    agent = board.register("alice", "coder")
+    board.admin("alice").post("/admin/revoke/coder")
+    assert save_grid(board, "alice", read=["household|coder"]).status_code == 404
+    assert save_grid(board, "alice", read=["household|bob"]).status_code == 404
+    assert save_grid(board, "alice", read=["household|nobody"]).status_code == 404
+    assert agent.request("GET", "/v1/me").status_code == 401
+
+
+def test_the_grid_ignores_malformed_cells(board):
+    board.register("alice", "coder")
+    r = save_grid(board, "alice", read=["household"], post=["|"], was=["x|y|zz"])
+    assert r.status_code == 303 and r.headers["location"] == "/admin?saved=0&queued=0#access"
+
+
+def test_the_grid_needs_a_login(board):
+    r = TestClient(board.app, base_url=HTTPS).post("/admin/grants", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+
+
+def test_the_notice_after_saving_is_plain_words(board):
+    from board.admin_view import grants_notice
+    assert grants_notice(0, 0) == "Nothing to change."
+    assert grants_notice(1, 0) == "Saved 1 change."
+    assert grants_notice(3, 2) == ("Saved 3 changes. 2 changes on shared lanes are waiting "
+                                   "for another admin to approve.")
+    alice = board.admin("alice")
+    assert "Saved 2 changes." in alice.get("/admin?saved=2&queued=0").text
+    assert "role=\"status\"" not in alice.get("/admin").text
+    page = alice.get("/admin?saved=<script>&queued=99999999").text  # not numbers it would print
+    assert "<script>" not in page and "Nothing to change." in page
+
+
+def test_the_audit_log_and_revoked_agents_start_collapsed(board):
+    board.register("alice", "coder")
+    board.admin("alice").post("/admin/revoke/coder")
+    html = board.admin("alice").get("/admin").text
+    audit = re.search(r"<details[^>]*>\s*<summary>\s*<h3>Audit log", html)
+    assert audit and "open" not in audit.group(0)
+    revoked = re.search(r'<details class="revoked"[^>]*>', html).group(0)
+    assert "open" not in revoked and "1 revoked agent" in html
+
+
+def test_the_grid_script_is_served_and_has_no_inline_script(board):
+    r = TestClient(board.app, base_url=HTTPS).get("/static/admin.js")
+    assert r.status_code == 200 and "javascript" in r.headers["content-type"]
+    assert "innerHTML" not in r.text
+    html = board.admin("alice").get("/admin").text
+    assert '<script src="/static/admin.js"' in html
+    assert not re.search(r"<script(?![^>]*\bsrc=)", html)
+
+
+def submit_as_browser(board, admin):
+    """Load /admin and post the grid as a browser would with nothing changed:
+    checked boxes that are not disabled, plus every hidden `was` field."""
+    html = board.admin(admin).get("/admin").text
+    data = {"read": [], "post": [], "was": []}
+    for tag in re.findall(r"<input[^>]*>", html):
+        name = re.search(r'name="(read|post|was)"', tag)
+        if not name or re.search(r"\bdisabled\b", tag):
+            continue
+        if name.group(1) == "was" or re.search(r"\bchecked\b", tag):
+            data[name.group(1)].append(re.search(r'value="([^"]*)"', tag).group(1))
+    return board.admin(admin).post("/admin/grants", data=data, follow_redirects=False)
+
+
+def test_saving_leaves_lanes_the_admin_can_see_but_not_administer_alone(board):
+    # bob lets alice read his private lane, where alice's agent also holds a right.
+    # Those cells are disabled for alice; saving her page must not try to clear them.
+    agent = board.register("alice", "coder")
+    board.grant("bob", "bob-money", "alice", read=True, post=False)
+    board.grant("bob", "bob-money", "coder", read=True, post=False)
+    html = board.admin("alice").get("/admin").text
+    box = re.search(r'<input[^>]*name="read" value="bob-money\|coder"[^>]*>', html).group(0)
+    assert re.search(r"\bdisabled\b", box)
+    r = submit_as_browser(board, "alice")
+    assert r.status_code == 303 and r.headers["location"] == "/admin?saved=0&queued=0#access"
+    assert lanes_of(agent) == {"bob-money": {"read": True, "post": False}}
+
+
+def test_the_notice_ignores_digits_that_are_not_ascii(board):
+    page = board.admin("alice").get("/admin?saved=%C2%B2&queued=%D9%A3")
+    assert page.status_code == 200 and "Nothing to change." in page.text
+
+
+def test_other_admins_agents_have_no_revoke_or_reconnect_on_the_grid_page(board):
+    board.register("bob", "bobs-bot")
+    html = board.admin("alice").get("/admin").text
+    assert 'data-agent="bobs-bot"' in html
+    assert "/admin/revoke/bobs-bot" not in html and "/admin/reconnect/bobs-bot" not in html
+
+
+def test_a_very_long_display_name_can_wrap_on_the_card(board):
+    board.register("alice", "coder")
+    board.admin("alice")  # the display name is set at registration; check the CSS hook
+    html = board.admin("alice").get("/admin").text
+    assert ".who strong { font-size:16px; overflow-wrap:anywhere; }" in html

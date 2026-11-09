@@ -243,12 +243,12 @@ def test_lane_page_refusals_are_pages(board):
 
 def test_setting_rights_with_no_active_agents_offers_no_form(board):
     page = board.admin("alice").get("/admin").text
-    assert 'action="/admin/grant"' not in page and "No active agents" in page
+    assert 'action="/admin/grants"' not in page and "No active agents" in page
     board.register("alice", "bot")
     bot_page = board.admin("alice").get("/admin").text
-    assert 'action="/admin/grant"' in bot_page and "No active agents" not in bot_page
+    assert 'action="/admin/grants"' in bot_page and "No active agents" not in bot_page
     board.admin("alice").post("/v1/admin/principals/bot/revoke")
-    assert 'action="/admin/grant"' not in board.admin("alice").get("/admin").text
+    assert 'action="/admin/grants"' not in board.admin("alice").get("/admin").text
 
 
 # --- A second tap on Finish setup -------------------------------------------
