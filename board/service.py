@@ -963,6 +963,27 @@ def set_grant(conn, caller, slug, principal_id, can_read, can_post):
     return {"status": status, "pending_id": pending_id}
 
 
+def set_grants(conn, caller, changes):
+    """Apply several grant changes from the admin page's lane grid, each
+    `(slug, principal_id, can_read, can_post)`, one set_grant apiece. Every change
+    is checked before any is applied, so a bad one leaves the rest alone; the
+    request's transaction covers the rest. Agents only, and only active ones.
+    Returns how many were applied, left pending, or applied provisionally."""
+    _require_admin(caller)
+    for slug, principal_id, _read, _post in changes:
+        lane = known_lane(conn, caller, slug)
+        if not administers(caller, lane):
+            raise BoardError(403, "you do not administer this lane")
+        row = conn.execute("SELECT kind, status FROM principals WHERE id = ?",
+                           (principal_id,)).fetchone()
+        if row is None or row["kind"] != "agent" or row["status"] != "active":
+            raise not_found()
+    counts = {"applied": 0, "pending": 0, "provisional": 0}
+    for change in changes:
+        counts[set_grant(conn, caller, *change)["status"]] += 1
+    return counts
+
+
 def list_pending(conn, caller):
     _require_admin(caller)
     rows = conn.execute(
