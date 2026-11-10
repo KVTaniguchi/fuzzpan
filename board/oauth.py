@@ -60,8 +60,14 @@ def redirect_allowed(uri):
         return True
     try:
         url = urlsplit(uri)
-        return (url.scheme == "http" and url.hostname in LOOPBACK
-                and not url.username and not url.fragment and url.port is not None)
+        if url.scheme != "http" or url.hostname not in LOOPBACK or url.fragment \
+                or url.port is None:
+            return False
+        # The origin goes into the sign-in page's CSP header and is shown to the admin,
+        # so the address may hold the bare host and port and nothing else: no user or
+        # password part, and no stray text the parser skipped over.
+        host = f"[{url.hostname}]" if ":" in url.hostname else url.hostname
+        return url.netloc.lower() == f"{host}:{url.port}"
     except ValueError:
         return False
 

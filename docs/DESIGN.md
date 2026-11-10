@@ -1074,7 +1074,7 @@ Connecting is: paste `<board url>/mcp` into the app, sign in once, tick lanes.
   Links use `BOARD_PUBLIC_URL` when set.
 - `POST /oauth/register`: stateless dynamic registration; every redirect address must be
   allowed: Claude's callbacks, ChatGPT's (`https://chatgpt.com/connector_platform_oauth_redirect`
-  and `https://chatgpt.com/connector/oauth/<id>`, that exact shape), loopback with a port,
+  and `https://chatgpt.com/connector/oauth/<id>`, that exact shape), loopback with a port (the bare host and port only: no user or password part),
   or an exact address in `BOARD_OAUTH_REDIRECTS`.
 - `GET|POST /oauth/authorize`: the board's own page. The admin gives username, password
   and authenticator code and names the agent. The suggested name follows the callback:

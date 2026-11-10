@@ -490,3 +490,19 @@ def test_the_callback_names_the_issuer(board):
     _, challenge = pkce()
     q = parse_qs(urlsplit(approve(board, "alice", challenge).headers["location"]).query)
     assert q["iss"] == [meta["issuer"]]
+
+
+def test_loopback_redirect_must_be_a_bare_host_and_port():
+    """The redirect's origin is written into the sign-in page's CSP header and shown
+    to the admin, so a loopback address may carry nothing but the host and port."""
+    for good in ("http://localhost:8123/callback", "http://127.0.0.1:8123/cb?x=1",
+                 "http://[::1]:8123/cb", "http://LOCALHOST:8123/cb"):
+        assert redirect_allowed(good), good
+    for bad in ("http://:x; script-src 'unsafe-inline' *@localhost:80/cb",
+                "http://:claude.ai@localhost:80/cb",
+                "http://@localhost:80/cb",
+                "http://user@localhost:80/cb",
+                "http://[::1]junk; script-src *:80/cb",
+                "http://localhost:080/cb",
+                "http://localhost :80/cb"):
+        assert not redirect_allowed(bad), bad
