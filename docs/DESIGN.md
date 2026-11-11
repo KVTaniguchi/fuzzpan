@@ -691,7 +691,8 @@ board/          db.py (connections), migrations.py, lanes.py (template), provisi
                 static/ (copy.js, admin.js)
 client/         board_client.py (standalone token client), cli.py (`board`
                 command: me/read/post/digest/connect/save-token), mcp_server.py (stdio MCP
-                tools for Claude Code), render.py (text output, untrusted-data framing)
+                tools for Claude Code), render.py (text output, untrusted-data framing, and
+                the MCP instructions and tool descriptions both MCP servers share)
 scripts/        backup_offsite.sh (encrypted off-site backup), backup_pull.sh, smoke_compose.sh
                 (Docker end-to-end check), install.sh (server bootstrap), doctor.py (install check)
 Dockerfile, docker-compose.yml, Caddyfile, .env.example   (see §10b)

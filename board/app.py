@@ -126,6 +126,10 @@ def rights_change(change):
 TEMPLATES.env.filters["rights_change"] = rights_change
 
 
+class LoginRequired(Exception):
+    """A page needs a logged-in admin; the browser is sent to the login page."""
+
+
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
        "img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -168,9 +172,13 @@ def create_app(db_path, secure_cookies=True):
         message = str(message)
         return message[:1].upper() + message[1:] + ("" if message.endswith(".") else ".")
 
+    def page_admin(request, conn):
+        """The admin whose session cookie came with the request, or None."""
+        return service.session_admin(conn, request.cookies.get(SESSION_COOKIE))
+
     def session_who(request):
         with connect(app.state.db_path) as conn:
-            return service.session_admin(conn, request.cookies.get(SESSION_COOKIE))
+            return page_admin(request, conn)
 
     async def error_response(request, status, message, page_message=None, headers=None):
         """The API always answers {"error": ...}. Everywhere else a person is
@@ -247,6 +255,10 @@ def create_app(db_path, secure_cookies=True):
                                     page_message="Part of that form was missing or not valid. "
                                                  "Go back and try again.")
 
+    @app.exception_handler(LoginRequired)
+    async def login_required(request, exc):
+        return RedirectResponse("/login", status_code=303)
+
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request, exc):
         return await error_response(request, exc.status_code, str(exc.detail),
@@ -274,17 +286,23 @@ def create_app(db_path, secure_cookies=True):
             who = await run_in_threadpool(service.authenticate_token, conn, token)
             log.info("agent=%s %s %s", who.id, request.method, request.url.path)
             return who
-        human = await run_in_threadpool(
-            service.session_admin, conn, request.cookies.get(SESSION_COOKIE))
+        human = await run_in_threadpool(page_admin, request, conn)
         if human is None:
             raise BoardError(401, "send a bearer token or log in")
         return human
 
     async def admin(request: Request, conn=get_db):
-        human = await run_in_threadpool(
-            service.session_admin, conn, request.cookies.get(SESSION_COOKIE))
+        """A logged-in admin, for the admin API: 401 without one."""
+        human = await run_in_threadpool(page_admin, request, conn)
         if human is None:
             raise BoardError(401, "admin login required")
+        return human
+
+    async def page_who(request: Request, conn=get_db):
+        """A logged-in admin, for the pages: anyone else goes to the login page."""
+        human = await run_in_threadpool(page_admin, request, conn)
+        if human is None:
+            raise LoginRequired()
         return human
 
     def json_object(raw):
@@ -394,14 +412,8 @@ def create_app(db_path, secure_cookies=True):
 
     # --- Feed page -------------------------------------------------------
 
-    def page_admin(request, conn):
-        return service.session_admin(conn, request.cookies.get(SESSION_COOKIE))
-
     def render(request, template, status_code=200, **ctx):
         return TEMPLATES.TemplateResponse(request, template, ctx, status_code=status_code)
-
-    def to_login():
-        return RedirectResponse("/login", status_code=303)
 
     @app.get("/login")
     def login_page(request: Request):
@@ -469,26 +481,20 @@ def create_app(db_path, secure_cookies=True):
     @app.post("/logout")
     def logout(request: Request, conn=get_db):
         service.logout(conn, request.cookies.get(SESSION_COOKIE))
-        resp = to_login()
+        resp = RedirectResponse("/login", status_code=303)
         resp.delete_cookie(SESSION_COOKIE, httponly=True, samesite="strict",
                            secure=secure_cookies)
         return resp
 
     @app.get("/")
-    def index(request: Request, conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def index(request: Request, who=Depends(page_who), conn=get_db):
         lanes = [service.read_posts(conn, who, l["slug"], limit=5)
                  for l in service.visible_lanes(conn, who)]
         pending_count = len(service.list_pending(conn, who))
         return render(request, "index.html", who=who, lanes=lanes, pending_count=pending_count)
 
     @app.get("/lanes/{slug}")
-    def lane_page(slug: str, request: Request, conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def lane_page(slug: str, request: Request, who=Depends(page_who), conn=get_db):
         feed = service.read_posts(conn, who, slug, limit=200)
         lane = service.readable_lane(conn, who, slug)
         can_post = service.rights(conn, who, lane)[1]
@@ -496,11 +502,8 @@ def create_app(db_path, secure_cookies=True):
                       kinds=sorted(service.POST_KINDS))
 
     @app.post("/lanes/{slug}/post")
-    def lane_post(slug: str, request: Request, body: str = Form(...), kind: str = Form("note"),
-                  conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def lane_post(slug: str, body: str = Form(...), kind: str = Form("note"),
+                  who=Depends(page_who), conn=get_db):
         # A browser sends a newline in a textarea as CRLF; count and keep it as one.
         service.create_post(conn, who, slug, body.replace("\r\n", "\n"), kind)
         return RedirectResponse(f"/lanes/{slug}", status_code=303)
@@ -518,10 +521,7 @@ def create_app(db_path, secure_cookies=True):
                       base=public_base(request), check_request=CHECK_REQUEST)
 
     @app.get("/admin")
-    def admin_page(request: Request, conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def admin_page(request: Request, who=Depends(page_who), conn=get_db):
         agents = service.list_agents(conn, who)
         invites = service.list_invites(conn, who)
         lanes = service.list_admin_lanes(conn, who)
@@ -556,17 +556,11 @@ def create_app(db_path, secure_cookies=True):
                       reconnect=reconnect, url=f"{public_base(request)}/invite/{made['code']}")
 
     @app.get("/admin/invite")
-    def invite_form_page(request: Request, conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def invite_form_page(request: Request, who=Depends(page_who), conn=get_db):
         return invite_form(request, conn, who)
 
     @app.post("/admin/invite")
-    async def invite_form_submit(request: Request, conn=get_db):
-        who = await run_in_threadpool(page_admin, request, conn)
-        if who is None:
-            return to_login()
+    async def invite_form_submit(request: Request, who=Depends(page_who), conn=get_db):
         form = await request.form()
         name = form.get("display_name")
         name = name if isinstance(name, str) else ""
@@ -596,17 +590,11 @@ def create_app(db_path, secure_cookies=True):
                       others=service.other_admins(conn, who.id))
 
     @app.get("/welcome")
-    def welcome_page(request: Request, conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def welcome_page(request: Request, who=Depends(page_who), conn=get_db):
         return welcome_form(request, conn, who)
 
     @app.post("/welcome")
-    async def welcome_submit(request: Request, conn=get_db):
-        who = await run_in_threadpool(page_admin, request, conn)
-        if who is None:
-            return to_login()
+    async def welcome_submit(request: Request, who=Depends(page_who), conn=get_db):
         form = await request.form()
         name = form.get("display_name")
         name = name if isinstance(name, str) else ""
@@ -628,37 +616,26 @@ def create_app(db_path, secure_cookies=True):
                       review=service.changes_to_review(conn, who))
 
     @app.post("/admin/reconnect/{principal_id}")
-    def admin_reconnect(principal_id: str, request: Request, conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def admin_reconnect(principal_id: str, request: Request, who=Depends(page_who),
+                        conn=get_db):
         made = service.create_reconnect_invite(conn, who, principal_id)
         agent = next(a for a in service.list_agents(conn, who) if a["id"] == principal_id)
         return link_page(request, who, made, agent["display_name"], reconnect=True)
 
     @app.post("/admin/invites/{invite_id}/cancel")
-    def admin_cancel_invite(invite_id: int, request: Request, conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def admin_cancel_invite(invite_id: int, who=Depends(page_who), conn=get_db):
         service.cancel_invite(conn, who, invite_id)
         return RedirectResponse("/admin", status_code=303)
 
     @app.post("/admin/revoke/{principal_id}")
-    def admin_revoke(principal_id: str, request: Request, conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def admin_revoke(principal_id: str, who=Depends(page_who), conn=get_db):
         service.revoke_agent(conn, who, principal_id)
         return RedirectResponse("/admin", status_code=303)
 
     @app.post("/admin/grant")
-    def admin_grant(request: Request, lane: str = Form(...), principal: str = Form(...),
+    def admin_grant(lane: str = Form(...), principal: str = Form(...),
                     can_read: bool = Form(False), can_post: bool = Form(False),
-                    conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+                    who=Depends(page_who), conn=get_db):
         service.set_grant(conn, who, lane, principal, can_read, can_post)
         return RedirectResponse("/admin", status_code=303)
 
@@ -668,14 +645,11 @@ def create_app(db_path, secure_cookies=True):
         return (lane, agent) if sep and lane and agent else None
 
     @app.post("/admin/grants")
-    def admin_grants(request: Request, read: list[str] = Form([]), post: list[str] = Form([]),
-                     was: list[str] = Form([]), conn=get_db):
+    def admin_grants(read: list[str] = Form([]), post: list[str] = Form([]),
+                     was: list[str] = Form([]), who=Depends(page_who), conn=get_db):
         """Save the lane grid. `was` records each cell's rights as the page showed
         them ("household|coder|rp"), so only cells the admin changed are applied:
         a cell somebody else changed since the page loaded is left alone."""
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
         before = {}
         for value in was:
             key, _, held = value.rpartition("|")
@@ -694,10 +668,7 @@ def create_app(db_path, secure_cookies=True):
                                 f"&queued={done['pending']}#access", status_code=303)
 
     @app.post("/admin/pending/{pending_id}/{decision}")
-    def admin_resolve(pending_id: int, decision: str, request: Request, conn=get_db):
-        who = page_admin(request, conn)
-        if who is None:
-            return to_login()
+    def admin_resolve(pending_id: int, decision: str, who=Depends(page_who), conn=get_db):
         if decision not in ("approve", "reject"):
             raise BoardError(404, "not found")
         service.resolve_pending(conn, who, pending_id, decision == "approve")
