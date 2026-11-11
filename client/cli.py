@@ -14,7 +14,7 @@ import sys
 
 from client.board_client import BoardClient, BoardClientError, BoardURLError, InviteLinkError, \
     TokenMissing, read_token, redeem, token_path, write_token
-from client.render import render_feed, render_feeds, render_me
+from client.render import CHECK_REQUEST, render_feed, render_feeds, render_me
 
 
 def default_client(agent):
@@ -81,6 +81,8 @@ def connect(invite_url, http, out, err):
             print(f"{p['lane']}: waiting for another admin's approval", file=out)
     print(f"use it with: BOARD_URL={base_url} uv run board --as {agent} me "
           "(from a checkout of the board project)", file=out)
+    # Our own wording, not the reply's: a hostile link must not get to speak here.
+    print(f"next: {CHECK_REQUEST}", file=out)
     return 0
 
 

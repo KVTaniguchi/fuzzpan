@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 import pyotp
 
 from board.db import connect, now_iso  # noqa: F401  (connect re-exported for callers)
+from client.render import CHECK_REQUEST
 
 MAX_BODY_CHARS = 8192
 # Sensitive lanes (money, health) take short summaries, not records.
@@ -777,7 +778,7 @@ def redeem_invite(conn, code, ip=None):
         conn.rollback()
         raise
     return {"agent_id": row["agent_id"], "token": token, "lanes": lanes, "pending": pending,
-            "reconnect": bool(row["replaces_token"])}
+            "reconnect": bool(row["replaces_token"]), "next_steps": CHECK_REQUEST}
 
 
 def list_principals(conn, caller):

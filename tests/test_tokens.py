@@ -31,7 +31,8 @@ def test_redemption_response_is_not_cached(board):
     code = board.invite("alice", "coder", {})
     r = TestClient(board.app).post(f"/v1/invites/{code}/redeem")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
-    assert set(r.json()) == {"agent_id", "token", "lanes", "pending", "reconnect"}
+    assert set(r.json()) == {"agent_id", "token", "lanes", "pending", "reconnect",
+                             "next_steps"}
 
 
 def test_the_token_is_not_shown_again(board):
