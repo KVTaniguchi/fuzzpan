@@ -24,6 +24,7 @@ from board import limits, mcp_http, oauth, service
 from board.admin_view import build_admin_view, grants_notice
 from board.db import connect, init_db
 from board.service import BoardError
+from client.render import CHECK_REQUEST
 
 # Under uvicorn's logger so it lands in the service log at INFO.
 log = logging.getLogger("uvicorn.error.board")
@@ -514,7 +515,7 @@ def create_app(db_path, secure_cookies=True):
             return render(request, "invite.html", invite=None, error=e.message,
                           status_code=e.status)
         return render(request, "invite.html", invite=invite, error=None, code=code,
-                      base=public_base(request))
+                      base=public_base(request), check_request=CHECK_REQUEST)
 
     @app.get("/admin")
     def admin_page(request: Request, conn=get_db):

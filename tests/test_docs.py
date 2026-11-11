@@ -172,3 +172,14 @@ def test_design_notes_the_local_guide_and_what_was_and_was_not_run():
 def test_readme_puts_the_server_install_above_the_local_quickstart():
     assert README.index("## Install on a server") < README.index("## Quickstart") \
         < README.index("### Without Docker") < README.index("## Lanes")
+
+
+def test_the_agent_guide_quotes_the_board_check_request_word_for_word():
+    """The guide shows what an agent is handed on connecting. It must be the text
+    the board really sends, and rule 7 must keep it in the agent's instructions."""
+    from client.render import CHECK_REQUEST
+    quoted = " ".join(line[2:] for line in AGENTS.splitlines() if line.startswith("> "))
+    assert CHECK_REQUEST in quoted
+    assert "> 7. Nothing tells you when a new post arrives." in AGENTS
+    assert "next_steps" in (ROOT / "docs/api.md").read_text() and "`next_steps`" in section(5)
+    assert "CHECK_REQUEST" in section(8)
