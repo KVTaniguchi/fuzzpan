@@ -92,6 +92,13 @@ def other_admins(conn, name):
     return [a for a in list_admins(conn) if a != name]
 
 
+def own_agent(conn, owner, principal_id, active_only=False):
+    """The agent row if `owner` owns it (and, with active_only, it is active), else None."""
+    return conn.execute("SELECT * FROM principals WHERE id = ? AND kind = 'agent' AND owner = ?"
+                        + (" AND status = 'active'" if active_only else ""),
+                        (principal_id, owner)).fetchone()
+
+
 # --- Authentication -----------------------------------------------------
 
 def _hash_token(token):
@@ -461,6 +468,14 @@ def known_lane(conn, caller, slug):
     return lane
 
 
+def administered_lane(conn, caller, slug):
+    """The lane, if the caller administers it. 404 if they can't see it, else 403."""
+    lane = known_lane(conn, caller, slug)
+    if not administers(caller, lane):
+        raise BoardError(403, "you do not administer this lane")
+    return lane
+
+
 def readable_lane(conn, caller, slug):
     """404 with neither right; 403 for a post-only caller."""
     lane = known_lane(conn, caller, slug)
@@ -579,9 +594,7 @@ def register_agent(conn, caller, principal_id, display_name=None, with_token=Tru
 
 def revoke_agent(conn, caller, principal_id):
     _require_admin(caller)
-    row = conn.execute("SELECT * FROM principals WHERE id = ? AND kind = 'agent' AND owner = ?",
-                       (principal_id, caller.id)).fetchone()
-    if row is None:
+    if own_agent(conn, caller.id, principal_id) is None:
         raise not_found()
     # The token hashes go too, so revoked tokens are dead at rest as well: the invite
     # token and every OAuth connection.
@@ -660,9 +673,7 @@ def create_invite(conn, caller, display_name, lanes):
         raise BoardError(400, "lanes must be an object")
     wanted = {}
     for slug, rights_ in lanes.items():
-        lane = known_lane(conn, caller, slug)  # 404 for lanes the caller can't see
-        if not administers(caller, lane):
-            raise BoardError(403, "you do not administer this lane")
+        administered_lane(conn, caller, slug)  # 404 for lanes the caller can't see
         if not isinstance(rights_, dict):
             raise BoardError(400, "each lane needs {\"read\": bool, \"post\": bool}")
         entry = {"read": rights_.get("read", False), "post": rights_.get("post", False)}
@@ -677,8 +688,7 @@ def create_reconnect_invite(conn, caller, principal_id):
     """A link that gives one of the caller's active agents a new token and
     changes nothing else. Revoked agents cannot be reconnected."""
     _require_admin(caller)
-    row = conn.execute("SELECT * FROM principals WHERE id = ? AND kind = 'agent' AND owner = ? "
-                       "AND status = 'active'", (principal_id, caller.id)).fetchone()
+    row = own_agent(conn, caller.id, principal_id, active_only=True)
     if row is None:
         raise not_found()
     return _new_invite(conn, caller, principal_id, row["display_name"], {}, replaces_token=True)
@@ -755,9 +765,7 @@ def redeem_invite(conn, code, ip=None):
         admin = Caller(owner, "human", owner)
         if row["replaces_token"]:
             # Checked again now: the agent may have been revoked since the link was made.
-            if conn.execute("SELECT 1 FROM principals WHERE id = ? AND kind = 'agent' AND "
-                            "owner = ? AND status = 'active'",
-                            (row["agent_id"], owner)).fetchone() is None:
+            if own_agent(conn, owner, row["agent_id"], active_only=True) is None:
                 raise BoardError(410, "this agent is no longer active; ask for a new invite")
             token = issue_agent_token(conn, row["agent_id"])
             conn.execute("UPDATE invites SET status = 'cancelled' WHERE agent_id = ? AND "
@@ -934,9 +942,7 @@ def _forget_dropped(conn, caller, lane, principal_id, dropped, except_id):
 def set_grant(conn, caller, slug, principal_id, can_read, can_post):
     """Returns {"status": "applied" | "pending" | "provisional", ...}. See DESIGN.md §6."""
     _require_admin(caller)
-    lane = known_lane(conn, caller, slug)
-    if not administers(caller, lane):
-        raise BoardError(403, "you do not administer this lane")
+    lane = administered_lane(conn, caller, slug)
     if not conn.execute("SELECT 1 FROM principals WHERE id = ?", (principal_id,)).fetchone():
         raise not_found()
     if not (isinstance(can_read, bool) and isinstance(can_post, bool)):
@@ -972,9 +978,7 @@ def set_grants(conn, caller, changes):
     Returns how many were applied, left pending, or applied provisionally."""
     _require_admin(caller)
     for slug, principal_id, _read, _post in changes:
-        lane = known_lane(conn, caller, slug)
-        if not administers(caller, lane):
-            raise BoardError(403, "you do not administer this lane")
+        administered_lane(conn, caller, slug)
         row = conn.execute("SELECT kind, status FROM principals WHERE id = ?",
                            (principal_id,)).fetchone()
         if row is None or row["kind"] != "agent" or row["status"] != "active":
