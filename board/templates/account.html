@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Account · FuzzPan{% endblock %}
+{% block main %}
+<h2>Your login</h2>
+{% if notice %}<p class="card" role="status" style="border-color:var(--human)">{{ notice }}</p>{% endif %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<p class="meta">Each change asks for your current password and a code from your current
+authenticator, even though you are logged in. Each code works once: if you just used
+one, wait for the next.</p>
+
+<div class="card">
+  <h3>Change your password</h3>
+  <form method="post" action="/account/password">
+    <input type="hidden" name="username" value="{{ who.id }}" autocomplete="username">
+    <p><label>Current password<br>
+      <input type="password" name="current_password" autocomplete="current-password" required></label></p>
+    <p><label>Code from your authenticator<br>
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" required></label></p>
+    <p><label>New password ({{ min_chars }}+ characters)<br>
+      <input type="password" name="new_password" autocomplete="new-password" minlength="{{ min_chars }}" required></label></p>
+    <p><label>New password again<br>
+      <input type="password" name="new_password_confirm" autocomplete="new-password" minlength="{{ min_chars }}" required></label></p>
+    <p><button class="primary">Change password</button></p>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Replace your authenticator</h3>
+  <p>For a new phone, a different app, or if someone may have seen your key. Your
+  current authenticator keeps working until the new one is confirmed.</p>
+  <form method="post" action="/account/authenticator">
+    <input type="hidden" name="username" value="{{ who.id }}" autocomplete="username">
+    <p><label>Password<br>
+      <input type="password" name="password" autocomplete="current-password" required></label></p>
+    <p><label>Code from your current authenticator<br>
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" required></label></p>
+    <p><button class="primary">Set up a new authenticator</button></p>
+  </form>
+</div>
+
+<p class="meta">Saving either change logs out every other browser where you are logged
+in. Lost your password or your authenticator? That can't be fixed from here, because
+the board has no way to know it's you: ask whoever runs the board's server to reset
+your login, which gives you a new setup link.</p>
+{% endblock %}

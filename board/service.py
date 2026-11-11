@@ -282,6 +282,15 @@ def login(conn, username, password, code, client="unknown"):
     is the caller's address (limits.client_key): failures lock that pair, so
     someone elsewhere can't lock an admin out. A first login onboards the admin."""
     username = username.strip().lower()  # admin names are lowercase; phones capitalize
+    if not _prove(conn, username, password, code, client, logging_in=True):
+        return None
+    return _new_session(conn, username, _now())
+
+
+def _prove(conn, username, password, code, client, logging_in):
+    """True if `password` and `code` are this admin's, claiming the code's step so
+    it works once. The checks a login makes, shared with re-authentication inside
+    the board: failures count towards the same (username, client) lock."""
     row = conn.execute("SELECT * FROM admins WHERE name = ?", (username,)).fetchone()
     enrolled = row is not None and row["pass_hash"] and row["totp_secret"]
     now = _now()
@@ -290,28 +299,116 @@ def login(conn, username, password, code, client="unknown"):
     step = _matching_step(row["totp_secret"] if enrolled else None, code,
                           row["totp_last_step"] if enrolled else 0)
     if not enrolled:
-        return None
+        return False
     pair_locked = conn.execute("SELECT 1 FROM login_pairs WHERE username = ? AND client = ? "
                                "AND locked_until > ?", (username, client, now)).fetchone()
     if pair_locked:
-        return None  # locked: no counting, and the code is not consumed
+        return False  # locked: no counting, and the code is not consumed
     if not (password_ok and step is not None):
         _record_login_failure(conn, username, client, now)
-        return None
+        return False
     # Claim the step atomically so two concurrent logins can't share a code. The
     # claim also requires the credentials we checked to still be the stored ones
     # (a reset in between clears them) and no lock to have been set meanwhile.
+    # Re-authenticating is not a login, so it leaves last_login_at alone.
     claimed = conn.execute(
-        "UPDATE admins SET totp_last_step = ?, last_login_at = ? "
+        "UPDATE admins SET totp_last_step = ?, "
+        "last_login_at = CASE WHEN ? THEN ? ELSE last_login_at END "
         "WHERE name = ? AND totp_last_step < ? AND pass_hash = ? AND totp_secret = ? "
         "AND NOT EXISTS (SELECT 1 FROM login_pairs WHERE username = ? AND client = ? "
         "AND locked_until > ?)",
-        (step, now_iso(), username, step, row["pass_hash"], row["totp_secret"],
+        (step, logging_in, now_iso(), username, step, row["pass_hash"], row["totp_secret"],
          username, client, now)).rowcount
     if not claimed:
-        return None
+        return False
     conn.execute("DELETE FROM login_pairs WHERE username = ? AND client = ?", (username, client))
-    return _new_session(conn, username, now)
+    return True
+
+
+# --- Changing your own login, from inside the board ------------------------
+#
+# A logged-in admin may change their password or move their authenticator to a
+# new device, but only after proving both again (password and a current code):
+# a session left open on a shared computer must not be enough to take over the
+# account. Losing the password or the authenticator is still a host-side reset
+# (reset_admin): someone who can prove neither has nothing to prove here.
+
+AUTHENTICATOR_SECONDS = 600  # how long a new authenticator waits to be confirmed
+REAUTH_FAILED = "Wrong password or code, or this account is locked here for a while."
+
+
+def _fresh_session(conn, caller, what, **detail):
+    """End every session this admin has, including the current one, and return a
+    new one for the browser that made the change. A session someone else holds
+    stops working at once. Tells every admin, as a reset does."""
+    ended = conn.execute("DELETE FROM sessions WHERE admin = ?", (caller.id,)).rowcount
+    _audit(conn, caller.id, what, "shared", admin=caller.id,
+           other_sessions_ended=max(ended - 1, 0), **detail)
+    return _new_session(conn, caller.id, _now())
+
+
+def change_password(conn, caller, current_password, code, new_password, client="unknown"):
+    """Set a new password after proving the current password and a current code.
+    Returns a new session token, or None if the proof failed (counted like a
+    failed login). Every other session of this admin ends."""
+    _require_admin(caller)
+    if len(new_password) < MIN_PASSWORD_CHARS:
+        raise BoardError(400, f"Use a new password of at least {MIN_PASSWORD_CHARS} characters.")
+    if not _prove(conn, caller.id, current_password, code, client, logging_in=False):
+        return None
+    conn.execute("UPDATE admins SET pass_hash = ? WHERE name = ?",
+                 (hash_password(new_password), caller.id))
+    return _fresh_session(conn, caller, "password-changed")
+
+
+def start_authenticator_change(conn, caller, session, password, code, client="unknown"):
+    """After proving the password and a code from the current authenticator, make a
+    new TOTP secret for this browser session to show and confirm. Nothing changes
+    until it is confirmed: the old authenticator keeps working meanwhile. The secret
+    is tied to the session, so another session of the same admin can't see it.
+    Returns False if the proof failed (counted like a failed login)."""
+    _require_admin(caller)
+    if not _prove(conn, caller.id, password, code, client, logging_in=False):
+        return False
+    conn.execute("UPDATE sessions SET totp_pending = ?, totp_pending_expires_at = ? "
+                 "WHERE token = ? AND admin = ?",
+                 (pyotp.random_base32(), _now() + AUTHENTICATOR_SECONDS,
+                  _hash_token(session or ""), caller.id))
+    return True
+
+
+def _pending_secret(conn, caller, session):
+    row = conn.execute("SELECT totp_pending FROM sessions WHERE token = ? AND admin = ? "
+                       "AND totp_pending IS NOT NULL AND totp_pending_expires_at > ?",
+                       (_hash_token(session or ""), caller.id, _now())).fetchone()
+    return row["totp_pending"] if row else None
+
+
+def pending_authenticator(conn, caller, session):
+    """What the confirm page shows (as setup_details does), or None when this
+    session has not started a change or let it expire."""
+    _require_admin(caller)
+    secret = _pending_secret(conn, caller, session)
+    if secret is None:
+        return None
+    url = pyotp.TOTP(secret).provisioning_uri(name=caller.id, issuer_name="FuzzPan")
+    return {"admin": caller.id, "secret": secret, "otpauth_url": url}
+
+
+def finish_authenticator_change(conn, caller, session, code):
+    """Switch to the new authenticator once it shows a valid code. Returns a new
+    session token. Every other session of this admin ends."""
+    _require_admin(caller)
+    secret = _pending_secret(conn, caller, session)
+    if secret is None:
+        raise BoardError(410, "That change expired. Start again.")
+    step = _matching_step(secret, code, 0)
+    if step is None:
+        raise BoardError(400, "That code did not match the new authenticator. "
+                              "Check it and try again.")
+    conn.execute("UPDATE admins SET totp_secret = ?, totp_last_step = ? WHERE name = ?",
+                 (secret, step, caller.id))
+    return _fresh_session(conn, caller, "authenticator-replaced")
 
 
 def reset_admin(conn, admin):

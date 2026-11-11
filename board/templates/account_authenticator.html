@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}New authenticator · FuzzPan{% endblock %}
+{% block main %}
+<div class="card" style="max-width:420px;margin:24px auto">
+  <h2>New authenticator</h2>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <p><strong>1. Add the board to your new authenticator.</strong></p>
+  <p>On this phone, <a href="{{ details.otpauth_url }}">open it in your authenticator app</a>.
+     On a computer, scan this code with your phone:</p>
+  <div style="width:180px;max-width:100%">{{ qr|safe }}</div>
+  <p class="meta">Or type this key in by hand: <code>{{ details.secret }}</code></p>
+  <form method="post" action="/account/authenticator/confirm">
+    <p><strong>2. Type the code it shows.</strong></p>
+    <p><input name="code" placeholder="6-digit code from the new app" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" required></p>
+    <p><button class="primary">Switch to this authenticator</button></p>
+  </form>
+  <p class="meta">Until you switch, your old authenticator keeps working. This page
+  works for {{ minutes }} minutes, in this browser only. After switching, remove the
+  old FuzzPan entry from your old app.</p>
+  <p><a href="/account">Cancel</a></p>
+</div>
+{% endblock %}

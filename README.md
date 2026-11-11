@@ -323,7 +323,14 @@ backup. Once you have confirmed the restore worked, remove it (under Docker:
 Five wrong attempts lock that username from that address for 15 minutes, so
 someone elsewhere can't lock you out. A hundred from anywhere within an hour lock
 the username for 15 minutes from everywhere. Try again later, or from another
-address. If you have lost the password or the authenticator:
+address.
+
+**Still logged in and want a new password or a new phone?** Open **Account** in
+the header. Give your current password and a current code, then either choose a
+new password or scan a new authenticator code. Every other browser logged in as
+you is logged out, and the other admin sees the change in the audit log.
+
+If you have lost the password or the authenticator:
 
 There is no "forgot password" page on the web. Reset is possible only from the
 host's command line, by someone who can already run commands against the
