@@ -632,9 +632,20 @@ def _migration_13(conn):
         )""")
 
 
+def _migration_14(conn):
+    """An admin can move their authenticator to a new device from inside the board
+    (§5.3). The new secret waits on the session that asked for it, for ten minutes,
+    until a code from it confirms the move."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "totp_pending" not in columns:
+        conn.execute("ALTER TABLE sessions ADD COLUMN totp_pending TEXT")
+    if "totp_pending_expires_at" not in columns:
+        conn.execute("ALTER TABLE sessions ADD COLUMN totp_pending_expires_at REAL")
+
+
 MIGRATIONS = [_migration_1, _migration_2, _migration_3, _migration_4, _migration_5,
               _migration_6, _migration_7, _migration_8, _migration_9, _migration_10,
-              _migration_11, _migration_12, _migration_13]
+              _migration_11, _migration_12, _migration_13, _migration_14]
 
 
 class DatabaseTooNew(Exception):

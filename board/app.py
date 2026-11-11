@@ -403,6 +403,11 @@ def create_app(db_path, secure_cookies=True):
     def to_login():
         return RedirectResponse("/login", status_code=303)
 
+    def with_session(resp, token):
+        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="strict",
+                        secure=secure_cookies, max_age=service.SESSION_SECONDS)
+        return resp
+
     @app.get("/login")
     def login_page(request: Request):
         return render(request, "login.html", error=None, notice=None)
@@ -421,10 +426,7 @@ def create_app(db_path, secure_cookies=True):
                           error="Wrong username, password or code, or the account is locked.")
             resp.status_code = 401
             return resp
-        resp = RedirectResponse("/", status_code=303)
-        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="strict",
-                        secure=secure_cookies, max_age=service.SESSION_SECONDS)
-        return resp
+        return with_session(RedirectResponse("/", status_code=303), token)
 
     def setup_view(request, conn, token, error=None, status=200):
         """The setup page, or a 410 page when the link is expired or used."""
@@ -461,10 +463,8 @@ def create_app(db_path, secure_cookies=True):
             return setup_view(request, conn, token, error=e.message, status=e.status)
         # They just proved the password and a current code: log them in, so they
         # do not wait for the next code to get to the welcome page.
-        resp = RedirectResponse("/welcome", status_code=303)
-        resp.set_cookie(SESSION_COOKIE, service.begin_session(conn, name), httponly=True,
-                        samesite="strict", secure=secure_cookies, max_age=service.SESSION_SECONDS)
-        return resp
+        return with_session(RedirectResponse("/welcome", status_code=303),
+                            service.begin_session(conn, name))
 
     @app.post("/logout")
     def logout(request: Request, conn=get_db):
@@ -473,6 +473,100 @@ def create_app(db_path, secure_cookies=True):
         resp.delete_cookie(SESSION_COOKIE, httponly=True, samesite="strict",
                            secure=secure_cookies)
         return resp
+
+    # --- Your own login: change the password, move the authenticator ------
+    # Each step proves the password and a current code again (service._prove), so
+    # an open session alone can't take the account over. A failed proof is answered
+    # with a page, never an exception, so the failure count it recorded is kept.
+
+    ACCOUNT_DONE = {
+        "password": "Password changed. Every other browser logged in as you has been "
+                    "logged out.",
+        "authenticator": "Authenticator replaced: use the new one from now on. Every "
+                         "other browser logged in as you has been logged out.",
+    }
+
+    def account_view(request, who, error=None, status=200):
+        notice = ACCOUNT_DONE.get(request.query_params.get("done", ""))
+        return render(request, "account.html", who=who, error=error, notice=notice,
+                      min_chars=service.MIN_PASSWORD_CHARS, status_code=status)
+
+    @app.get("/account")
+    def account_page(request: Request, conn=get_db):
+        who = page_admin(request, conn)
+        if who is None:
+            return to_login()
+        return account_view(request, who)
+
+    @app.post("/account/password")
+    def account_password(request: Request, current_password: str = Form(...),
+                         code: str = Form(...), new_password: str = Form(...),
+                         new_password_confirm: str | None = Form(None), conn=get_db):
+        who = page_admin(request, conn)
+        if who is None:
+            return to_login()
+        try:
+            throttle(conn, request, "reauth")
+            # Checked before anything is proved, so a typo doesn't use up the code.
+            if new_password_confirm is not None and new_password_confirm != new_password:
+                raise BoardError(400, "The two new passwords did not match. Nothing was "
+                                      "changed; type them again.")
+            token = service.change_password(conn, who, current_password, code,
+                                            new_password, client_key(request))
+        except BoardError as e:
+            return account_view(request, who, error=sentence(e.message), status=e.status)
+        if token is None:
+            return account_view(request, who, error=service.REAUTH_FAILED, status=401)
+        return with_session(RedirectResponse("/account?done=password", status_code=303), token)
+
+    @app.post("/account/authenticator")
+    def account_authenticator_start(request: Request, password: str = Form(...),
+                                    code: str = Form(...), conn=get_db):
+        who = page_admin(request, conn)
+        if who is None:
+            return to_login()
+        try:
+            throttle(conn, request, "reauth")
+        except BoardError as e:
+            return account_view(request, who, error=sentence(e.message), status=e.status)
+        if not service.start_authenticator_change(conn, who, request.cookies.get(SESSION_COOKIE),
+                                                  password, code, client_key(request)):
+            return account_view(request, who, error=service.REAUTH_FAILED, status=401)
+        return RedirectResponse("/account/authenticator", status_code=303)
+
+    def authenticator_view(request, conn, who, error=None, status=200):
+        details = service.pending_authenticator(conn, who, request.cookies.get(SESSION_COOKIE))
+        if details is None:
+            # A confirm that finds nothing is a 410; just opening the page is not an error.
+            return account_view(request, who, status=200 if status == 200 else 410,
+                                error="That authenticator change expired or was not "
+                                      "started here. Start again below.")
+        qr = segno.make(details["otpauth_url"], error="m").svg_inline(
+            scale=5, dark="#1c1917", light="#ffffff")
+        return render(request, "account_authenticator.html", who=who, details=details, qr=qr,
+                      error=error, minutes=service.AUTHENTICATOR_SECONDS // 60,
+                      status_code=status)
+
+    @app.get("/account/authenticator")
+    def account_authenticator_page(request: Request, conn=get_db):
+        who = page_admin(request, conn)
+        if who is None:
+            return to_login()
+        return authenticator_view(request, conn, who)
+
+    @app.post("/account/authenticator/confirm")
+    def account_authenticator_confirm(request: Request, code: str = Form(...), conn=get_db):
+        who = page_admin(request, conn)
+        if who is None:
+            return to_login()
+        try:
+            token = service.finish_authenticator_change(
+                conn, who, request.cookies.get(SESSION_COOKIE), code)
+        except BoardError as e:
+            return authenticator_view(request, conn, who, error=sentence(e.message),
+                                      status=e.status)
+        return with_session(RedirectResponse("/account?done=authenticator", status_code=303),
+                            token)
 
     @app.get("/")
     def index(request: Request, conn=get_db):
