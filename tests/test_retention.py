@@ -9,24 +9,9 @@ import pytest
 from board import admin_cli
 from board.migrations import migrate_db
 from board.provision import provision_family
+from tests.conftest import q
 
 DAYS = 396  # 13 months
-
-
-@pytest.fixture
-def db(tmp_path, monkeypatch):
-    path = tmp_path / "b.db"
-    provision_family(path, [("alice", "Alice"), ("bob", "Bob")])
-    monkeypatch.setenv("BOARD_DB", str(path))
-    return path
-
-
-def q(db, sql, *args):
-    conn = sqlite3.connect(db)
-    try:
-        return conn.execute(sql, args).fetchall()
-    finally:
-        conn.close()
 
 
 def add_post(db, lane, days_old, body="Average in 12,480 out 10,912"):

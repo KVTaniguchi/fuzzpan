@@ -5,17 +5,14 @@ import asyncio
 import json
 import re
 import subprocess
-from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from board import limits, service
-from board.app import RequestSizeLimit, create_app
+from board.app import RequestSizeLimit
 from board.service import MAX_BODY_CHARS, MAX_RAW_BYTES, MAX_REQUEST_BYTES
+from tests.conftest import ROOT
 
-HTTPS = "https://testserver"
-ROOT = Path(__file__).parent.parent
 FORM = {"Content-Type": "application/x-www-form-urlencoded"}
 
 
@@ -39,14 +36,14 @@ def no_parsing_allowed(monkeypatch):
 
 def test_oversized_login_is_refused_before_parsing_by_content_length(board, monkeypatch):
     no_parsing_allowed(monkeypatch)
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     r = http.post("/login", content=b"a=" + b"x" * (MAX_REQUEST_BYTES + 1), headers=FORM)
     assert r.status_code == 413
 
 
 def test_oversized_chunked_login_is_refused_before_parsing(board, monkeypatch):
     no_parsing_allowed(monkeypatch)
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     r = http.post("/login", content=chunks(MAX_REQUEST_BYTES * 3), headers=FORM)
     assert r.status_code == 413
     assert "content-length" not in r.request.headers  # it really was chunked
@@ -60,14 +57,14 @@ def test_oversized_chunked_login_is_refused_before_parsing(board, monkeypatch):
     ("POST", "/no/such/route"), ("GET", "/healthz"),
 ])
 def test_the_cap_covers_every_route(board, method, path):
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     big = b"x" * (MAX_REQUEST_BYTES + 1)
     assert http.request(method, path, content=big, headers=FORM).status_code == 413
     assert http.request(method, path, content=chunks(len(big)), headers=FORM).status_code == 413
 
 
 def test_a_413_still_carries_the_security_headers(board):
-    r = TestClient(board.app, base_url=HTTPS).post(
+    r = board.anon().post(
         "/v1/invites/x/redeem", content=b"x" * (MAX_REQUEST_BYTES + 1))
     assert r.status_code == 413 and r.json() == {"error": "request too large"}
     assert r.headers["x-frame-options"] == "DENY"
@@ -75,7 +72,7 @@ def test_a_413_still_carries_the_security_headers(board):
 
 
 def test_a_body_exactly_at_the_cap_gets_through_and_one_byte_over_does_not(board):
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     at_cap = b"x" * MAX_REQUEST_BYTES
     assert http.post("/v1/invites/nope/redeem", content=at_cap).status_code == 404
     assert http.post("/v1/invites/nope/redeem", content=chunks(MAX_REQUEST_BYTES)).status_code == 404
@@ -114,9 +111,7 @@ WRITTEN_DIFFERENTLY = {
 
 @pytest.fixture
 def poster(board):
-    bot = board.register("alice", "bot")
-    board.grant("alice", "engineering", "bot")
-    return bot
+    return board.agent("alice", "bot", "engineering")
 
 
 def stored(board, lane="engineering"):
@@ -275,7 +270,7 @@ def test_a_client_that_hangs_up_mid_body_gets_no_traceback_through_the_whole_app
 def test_hanging_up_mid_body_does_not_stop_the_next_request(board):
     sent, receive, send, scope = cut_off_request()
     asyncio.run(board.app(scope, receive, send))
-    assert TestClient(board.app, base_url=HTTPS).get("/healthz").json() == {"status": "ok"}
+    assert board.anon().get("/healthz").json() == {"status": "ok"}
 
 
 def test_a_small_chunked_body_reaches_the_route_whole(board):

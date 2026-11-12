@@ -6,15 +6,13 @@ import sqlite3
 import stat
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
 from board import admin_cli
 from board.db import connect, init_db
 from board.provision import provision_family
-
-ROOT = Path(__file__).resolve().parent.parent
+from tests.conftest import ROOT
 
 
 def make_board(path, post_body="hello"):

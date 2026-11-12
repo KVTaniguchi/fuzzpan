@@ -4,12 +4,9 @@ import re
 import sqlite3
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from board.migrations import migrate_db
-from tests.conftest import HTTPS
+from tests.conftest import ROOT
 
-ROOT = Path(__file__).parent.parent
 DESIGN = (ROOT / "docs/DESIGN.md").read_text()
 README = (ROOT / "README.md").read_text()
 AGENTS = (ROOT / "docs/agents.md").read_text()
@@ -96,7 +93,7 @@ def test_gitignore_covers_macos_folder_files():
 
 def test_the_invite_page_leads_with_the_http_request(board):
     code = board.invite("alice", "coder", {})
-    page = TestClient(board.app, base_url=HTTPS).get(f"/invite/{code}").text
+    page = board.anon().get(f"/invite/{code}").text
     assert page.index("curl -X POST") < page.index("uv run board connect")
     assert "needs nothing installed" in page
     assert f"uv run board connect https://testserver/invite/{code}" in page

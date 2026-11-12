@@ -7,27 +7,7 @@ import sqlite3
 import pytest
 
 from board import admin_cli, service
-from board.provision import provision_family
-
-
-def q(db, sql, *args):
-    conn = sqlite3.connect(db)
-    try:
-        return conn.execute(sql, args).fetchall()
-    finally:
-        conn.close()
-
-
-@pytest.fixture
-def db(tmp_path, monkeypatch):
-    path = tmp_path / "b.db"
-    provision_family(path, [("alice", "Alice"), ("bob", "Bob")])
-    monkeypatch.setenv("BOARD_DB", str(path))
-    return path
-
-
-def slugs(db):
-    return {r[0] for r in q(db, "SELECT slug FROM lanes")}
+from tests.conftest import q, slugs
 
 
 def test_removes_an_empty_lane_and_everything_hanging_off_it(db, capsys):

@@ -57,7 +57,7 @@ def test_revocation_applies_on_the_next_request(board):
 
 def test_missing_and_wrong_tokens_refused(board):
     agent = board.register("alice", "coder")
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     assert http.get("/v1/me").status_code == 401
     for header in ("Bearer", "Bearer ", "Bearer fb_wrong", f"Basic {agent.token}",
                    agent.token, f"Bearer {agent.token}x", f"Bearer {agent.token[:-1]}"):

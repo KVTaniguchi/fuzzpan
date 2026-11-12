@@ -6,11 +6,11 @@ import importlib.util
 import json
 import ssl
 import urllib.error
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
+from tests.conftest import ROOT
+
 spec = importlib.util.spec_from_file_location("doctor", ROOT / "scripts" / "doctor.py")
 doctor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(doctor)
