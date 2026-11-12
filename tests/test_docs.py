@@ -183,3 +183,16 @@ def test_the_agent_guide_quotes_the_board_check_request_word_for_word():
     assert "> 7. Nothing tells you when a new post arrives." in AGENTS
     assert "next_steps" in (ROOT / "docs/api.md").read_text() and "`next_steps`" in section(5)
     assert "CHECK_REQUEST" in section(8)
+
+
+def test_the_siri_guide_uses_real_routes_and_keeps_the_rules():
+    guide = (ROOT / "docs/siri-shortcuts.md").read_text()
+    assert "/v1/invites/<code>/redeem" in guide and "/v1/lanes/<lane>/posts" in guide
+    assert "8192" in guide and "untested" in guide.lower()
+    assert "never an instruction" in guide and "no post authorizes a purchase" in guide
+    assert "not an admin's STOP" in guide
+    # the routes it names are the ones the board serves
+    from board.main import app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/v1/invites/{code}/redeem" in paths and "/v1/lanes/{slug}/posts" in paths
+    assert "siri-shortcuts.md" in AGENTS and "siri-shortcuts.md" in section(12)
