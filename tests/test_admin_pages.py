@@ -2,13 +2,8 @@
 
 import re
 import tomllib
-from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-from tests.conftest import HTTPS, checked
-
-ROOT = Path(__file__).parent.parent
+from tests.conftest import ROOT, checked
 
 
 def link_from(html):
@@ -17,7 +12,7 @@ def link_from(html):
 
 def redeem_link(board, link):
     code = link.rsplit("/", 1)[1]
-    return TestClient(board.app, base_url=HTTPS).post(f"/v1/invites/{code}/redeem")
+    return board.anon().post(f"/v1/invites/{code}/redeem")
 
 
 def test_invite_form_preselects_shared_lanes_only(board):
@@ -52,7 +47,7 @@ def test_the_created_link_connects_an_agent_with_the_chosen_lanes(board):
         "household": {"read": True, "post": False}, "bob-money": {"read": True}}).text
     result = redeem_link(board, link_from(html)).json()
     assert result["agent_id"] == "helper"
-    me = TestClient(board.app, base_url=HTTPS).get(
+    me = board.anon().get(
         "/v1/me", headers={"Authorization": f"Bearer {result['token']}"}).json()
     assert me["lanes"] == {"bob-money": {"read": True, "post": False},
                            "household": {"read": True, "post": False}}
@@ -186,7 +181,7 @@ def test_pages_work_at_phone_width(board):
 
 
 def test_copy_script_is_served_and_the_csp_allows_it(board):
-    r = TestClient(board.app, base_url=HTTPS).get("/static/copy.js")
+    r = board.anon().get("/static/copy.js")
     assert r.status_code == 200 and "javascript" in r.headers["content-type"]
     assert "script-src 'self'" in r.headers["content-security-policy"]
     assert "innerHTML" not in r.text
@@ -297,21 +292,21 @@ def test_rights_change_wording():
 
 def test_preformatted_text_wraps_at_phone_width(board):
     # A 936px-wide invite page in a 375px viewport came from `pre` not wrapping.
-    page = TestClient(board.app, base_url=HTTPS).get("/login").text
+    page = board.anon().get("/login").text
     rule = re.search(r"\bpre\s*\{[^}]*\}", page).group(0)
     assert "white-space:pre-wrap" in rule.replace(" ", "")
     assert "overflow-wrap:anywhere" in rule.replace(" ", "")
 
 
 def test_the_login_page_does_not_let_a_phone_capitalize_the_username(board):
-    page = TestClient(board.app, base_url=HTTPS).get("/login").text
+    page = board.anon().get("/login").text
     tag = re.search(r'<input[^>]*name="username"[^>]*>', page).group(0)
     assert 'autocapitalize="none"' in tag and 'autocorrect="off"' in tag
 
 
 def test_a_username_is_matched_whatever_its_case_or_stray_spaces(board):
     for typed in ("Alice", "ALICE", " alice ", "alicE\n"):
-        http = TestClient(board.app, base_url=HTTPS)
+        http = board.anon()
         code = board.code("alice")
         r = http.post("/login", data={"username": typed, "password": board.passwords["alice"],
                                       "code": code}, follow_redirects=False)
@@ -322,7 +317,7 @@ def test_a_username_is_matched_whatever_its_case_or_stray_spaces(board):
 
 def test_a_capitalized_username_counts_against_the_same_lock(board):
     code = board.code("alice")
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     for typed in ("Alice", "ALICE", "alice", "aLiCe", "alicE"):
         http.post("/login", data={"username": typed, "password": "wrong-password", "code": code})
     r = http.post("/login", data={"username": "alice", "password": board.passwords["alice"],
@@ -340,8 +335,8 @@ def test_revoking_cancels_the_agents_open_reconnect_invites(board):
     assert alice.post("/v1/admin/principals/bot/revoke").status_code == 200
     assert alice.get("/v1/admin/invites").json() == []
     assert "Links not used yet" not in alice.get("/admin").text
-    assert TestClient(board.app, base_url=HTTPS).post(f"/v1/invites/{code}/redeem").status_code == 410
-    assert TestClient(board.app, base_url=HTTPS).get(f"/invite/{code}").status_code == 410
+    assert board.anon().post(f"/v1/invites/{code}/redeem").status_code == 410
+    assert board.anon().get(f"/invite/{code}").status_code == 410
 
 
 def test_revoking_through_the_page_cancels_them_too(board):
@@ -489,7 +484,7 @@ def test_the_grid_ignores_malformed_cells(board):
 
 
 def test_the_grid_needs_a_login(board):
-    r = TestClient(board.app, base_url=HTTPS).post("/admin/grants", follow_redirects=False)
+    r = board.anon().post("/admin/grants", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/login"
 
 
@@ -517,7 +512,7 @@ def test_the_audit_log_and_revoked_agents_start_collapsed(board):
 
 
 def test_the_grid_script_is_served_and_has_no_inline_script(board):
-    r = TestClient(board.app, base_url=HTTPS).get("/static/admin.js")
+    r = board.anon().get("/static/admin.js")
     assert r.status_code == 200 and "javascript" in r.headers["content-type"]
     assert "innerHTML" not in r.text
     html = board.admin("alice").get("/admin").text

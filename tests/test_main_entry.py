@@ -3,9 +3,8 @@
 import os
 import subprocess
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from tests.conftest import ROOT
 
 
 def test_main_exits_with_a_clear_message_when_board_db_is_unset(tmp_path):

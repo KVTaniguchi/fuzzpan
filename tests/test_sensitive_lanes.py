@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from board import admin_cli, service
+from board import admin_cli
 from board.migrations import migrate_db
 from board.provision import provision_family
 
@@ -14,22 +14,11 @@ LANE = "alice-money"  # sensitive in the default template
 
 @pytest.fixture
 def bot(board):
-    agent = board.register("alice", "bot")
-    assert board.grant("alice", LANE, "bot").status_code == 200
-    assert board.grant("alice", "household", "bot").status_code == 200
-    return agent
-
-
-def q(board, sql, *args):
-    conn = sqlite3.connect(board.app.state.db_path)
-    try:
-        return conn.execute(sql, args).fetchall()
-    finally:
-        conn.close()
+    return board.agent("alice", "bot", LANE, "household")
 
 
 def test_default_template_marks_money_and_health_lanes(board):
-    flagged = {r[0] for r in q(board, "SELECT slug FROM lanes WHERE sensitive = 1")}
+    flagged = {r[0] for r in board.q("SELECT slug FROM lanes WHERE sensitive = 1")}
     assert flagged == {"alice-money", "bob-money", "household-money", "health"}
 
 
@@ -48,7 +37,7 @@ def test_account_like_numbers_are_refused(board, bot, body):
     assert r.json()["error"]
     for digits in ("4111", "1234", "0210", "6789"):
         assert digits not in r.text  # never echo what was refused
-    assert q(board, "SELECT count(*) FROM posts")[0][0] == 0
+    assert board.q("SELECT count(*) FROM posts")[0][0] == 0
 
 
 @pytest.mark.parametrize("body", [
@@ -79,7 +68,7 @@ def test_other_lanes_keep_the_old_rules(board, bot):
 
 def test_refusals_are_audited_without_the_body(board, bot):
     bot.post(LANE, "card 4111 1111 1111 1111")
-    rows = q(board, "SELECT actor, action, scope, detail FROM audit_log "
+    rows = board.q("SELECT actor, action, scope, detail FROM audit_log "
                     "WHERE action = 'post-rejected'")
     assert len(rows) == 1
     actor, action, scope, detail = rows[0]
@@ -92,7 +81,7 @@ def test_the_feed_page_form_is_guarded_too(board):
     r = http.post(f"/lanes/{LANE}/post", data={"body": "routing 021000021"},
                   follow_redirects=False)
     assert r.status_code == 422, r.status_code
-    assert q(board, "SELECT count(*) FROM posts")[0][0] == 0
+    assert board.q("SELECT count(*) FROM posts")[0][0] == 0
 
 
 def test_migration_flags_existing_money_and_health_lanes(tmp_path):
@@ -121,8 +110,8 @@ def test_migration_flags_existing_money_and_health_lanes(tmp_path):
 def test_admin_cli_can_flag_and_unflag_a_lane(board, monkeypatch, capsys):
     monkeypatch.setenv("BOARD_DB", str(board.app.state.db_path))
     admin_cli.main(["set-sensitive", "trips", "on"])
-    assert q(board, "SELECT sensitive FROM lanes WHERE slug = 'trips'") == [(1,)]
+    assert board.q("SELECT sensitive FROM lanes WHERE slug = 'trips'") == [(1,)]
     admin_cli.main(["set-sensitive", "trips", "off"])
-    assert q(board, "SELECT sensitive FROM lanes WHERE slug = 'trips'") == [(0,)]
+    assert board.q("SELECT sensitive FROM lanes WHERE slug = 'trips'") == [(0,)]
     with pytest.raises(SystemExit):
         admin_cli.main(["set-sensitive", "no-such-lane", "on"])

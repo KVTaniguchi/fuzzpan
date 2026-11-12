@@ -2,11 +2,9 @@
 authenticator, each only after proving the password and a current code again."""
 
 import pyotp
-from fastapi.testclient import TestClient
 
 from board import service
 from board.service import AUTHENTICATOR_SECONDS, LOCK_AFTER, MIN_PASSWORD_CHARS
-from tests.conftest import HTTPS
 from tests.test_accounts import admin_row, wrong_code
 
 NEW_PASSWORD = "a brand new passphrase"
@@ -37,7 +35,7 @@ def admin(board, name="alice"):
 def second_browser(board, name="alice"):
     """Another logged-in session of the same admin, on a later code."""
     board.clock.advance(60)
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     assert board.login(name, board.code(name), http=http).status_code == 303
     board.clock.advance(60)
     return http
@@ -52,7 +50,7 @@ def audit_actions(board, name):
 
 
 def test_account_page_needs_a_login(board):
-    anon = TestClient(board.app, base_url=HTTPS)
+    anon = board.anon()
     assert anon.get("/account", follow_redirects=False).headers["location"] == "/login"
     for path in ("/account/password", "/account/authenticator",
                  "/account/authenticator/confirm"):

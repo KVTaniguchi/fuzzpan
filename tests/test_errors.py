@@ -1,31 +1,20 @@
 """Bad input gets a 4xx, never a 500. The API always answers {"error": ...}, and
 people filling in forms always get a plain page, never raw JSON."""
 
-import json
-
 import pytest
-from fastapi.testclient import TestClient
 
 from board import limits, service
 from board.service import MAX_REQUEST_BYTES
 
-HTTPS = "https://testserver"
-
 
 @pytest.fixture
 def bot(board):
-    agent = board.register("alice", "bot")
-    board.grant("alice", "engineering", "bot")
-    return agent
+    return board.agent("alice", "bot", "engineering")
 
 
 def raw_post(agent, path, content):
     return agent.http.post(path, content=content, headers={
         "Authorization": f"Bearer {agent.token}", "Content-Type": "application/json"})
-
-
-def anon(board, raise_errors=True):
-    return TestClient(board.app, base_url=HTTPS, raise_server_exceptions=raise_errors)
 
 
 def is_html(r):
@@ -155,7 +144,7 @@ def test_the_grant_form_still_works(board):
 # --- Forms answer people in plain pages -------------------------------------
 
 def test_login_429_is_a_page_with_the_form_still_there(board):
-    http = TestClient(board.app, base_url=HTTPS, client=("203.0.113.7", 1))
+    http = board.anon("203.0.113.7")
     for _ in range(limits.IP_LIMIT[0]):
         http.post("/login", data={"username": "a", "password": "b", "code": "1"})
     r = http.post("/login", data={"username": "a", "password": "b", "code": "1"})
@@ -164,7 +153,7 @@ def test_login_429_is_a_page_with_the_form_still_there(board):
 
 
 def test_setup_429_is_a_page(board):
-    http = TestClient(board.app, base_url=HTTPS, client=("203.0.113.7", 1))
+    http = board.anon("203.0.113.7")
     for _ in range(limits.IP_LIMIT[0]):
         http.get("/setup/nope")
     r = http.get("/setup/nope")
@@ -219,18 +208,18 @@ def test_the_lane_post_form_errors_are_pages(board):
 
 
 def test_a_broken_form_body_is_a_page(board):
-    r = anon(board).post("/login", content=b"x", headers={"Content-Type": "multipart/form-data"})
+    r = board.anon().post("/login", content=b"x", headers={"Content-Type": "multipart/form-data"})
     assert 400 <= r.status_code < 500 and is_html(r)
 
 
 def test_an_unknown_page_is_a_page_and_escapes_nothing_into_it(board):
-    r = anon(board).get("/no/<script>alert(1)</script>")
+    r = board.anon().get("/no/<script>alert(1)</script>")
     assert r.status_code == 404 and is_html(r) and "<script>alert" not in r.text
     assert 'href="/"' in r.text and "Log out" not in r.text
 
 
 def test_a_too_large_form_is_a_page(board):
-    r = anon(board).post("/login", content=b"x" * (MAX_REQUEST_BYTES + 1),
+    r = board.anon().post("/login", content=b"x" * (MAX_REQUEST_BYTES + 1),
                          headers={"Content-Type": "application/x-www-form-urlencoded"})
     assert r.status_code == 413 and is_html(r) and "too large" in r.text.lower()
     assert r.headers["x-frame-options"] == "DENY"
@@ -253,55 +242,48 @@ def test_setting_rights_with_no_active_agents_offers_no_form(board):
 
 # --- A second tap on Finish setup -------------------------------------------
 
-def finish(board, name="alice", client=None):
-    import pyotp
-    code = pyotp.TOTP(board.totp_secret(name)).at(int(board.clock.time()))
-    return (client or anon(board)).post(f"/setup/{board.tokens[name]}", follow_redirects=False,
-                                        data={"password": board.passwords[name], "code": code})
-
-
 def test_second_submit_of_a_finished_setup_says_it_is_done_and_links_to_login(board):
-    assert finish(board).status_code == 303
-    r = finish(board)
+    assert board.finish_setup().status_code == 303
+    r = board.finish_setup()
     assert r.status_code == 410 and is_html(r)
     assert "already" in r.text and 'href="/login"' in r.text and "expired" not in r.text
     assert "Ask the person" not in r.text
 
 
 def test_viewing_a_finished_setup_link_says_the_same(board):
-    finish(board)
-    r = anon(board).get(f"/setup/{board.tokens['alice']}")
+    board.finish_setup()
+    r = board.anon().get(f"/setup/{board.tokens['alice']}")
     assert r.status_code == 410 and "already" in r.text and 'href="/login"' in r.text
     assert board.totp_secret("alice") not in r.text
 
 
 def test_the_second_submit_changes_nothing(board):
-    finish(board)
+    board.finish_setup()
     with service.connect(board.app.state.db_path) as c:
         before = dict(c.execute("SELECT * FROM admins WHERE name = 'alice'").fetchone())
     board.passwords["alice"] = "a-different-password"
-    assert finish(board).status_code == 410
+    assert board.finish_setup().status_code == 410
     with service.connect(board.app.state.db_path) as c:
         assert dict(c.execute("SELECT * FROM admins WHERE name = 'alice'").fetchone()) == before
 
 
 def test_a_link_from_before_a_reset_is_expired_not_done(board):
-    finish(board)
+    board.finish_setup()
     old = board.tokens["alice"]
     with service.connect(board.app.state.db_path) as c:
         service.reset_admin(c, "alice")
-    r = anon(board).get(f"/setup/{old}")
+    r = board.anon().get(f"/setup/{old}")
     assert r.status_code == 410 and "expired" in r.text and "already done" not in r.text
 
 
 def test_a_never_used_expired_link_still_says_expired(board, frozen_time):
     frozen_time.advance(24 * 3600 + 1)
-    r = anon(board).get(f"/setup/{board.tokens['alice']}")
+    r = board.anon().get(f"/setup/{board.tokens['alice']}")
     assert r.status_code == 410 and "expired" in r.text
 
 
 def test_setup_form_errors_still_show_the_form(board):
-    r = anon(board).post(f"/setup/{board.tokens['alice']}", data={"password": "short", "code": "1"})
+    r = board.anon().post(f"/setup/{board.tokens['alice']}", data={"password": "short", "code": "1"})
     assert r.status_code == 400 and is_html(r) and "<form" in r.text
 
 

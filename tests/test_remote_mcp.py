@@ -7,11 +7,9 @@ import secrets
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from fastapi.testclient import TestClient
 
 from board import service
 from board.oauth import default_agent, redirect_allowed
-from tests.conftest import HTTPS
 
 CALLBACK = "https://claude.ai/api/mcp/auth_callback"
 
@@ -36,7 +34,7 @@ def agent(board):
 
 
 def test_requires_a_token_and_points_at_oauth(board):
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     for token in (None, "nope"):
         r = rpc(c, token, "tools/list")
         assert r.status_code == 401
@@ -115,7 +113,7 @@ def approve(board, admin, challenge, agent="claude-chat", redirect=CALLBACK, lan
 
 def sign_in_step(board, admin, challenge, agent="claude-chat", redirect=CALLBACK, **override):
     """Only the first step: the credentials form."""
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     board._enroll(admin)
     data = {**authorize_fields(challenge, redirect), "agent": agent, "username": admin,
             "password": board.passwords[admin], "code": board.code(admin), **override}
@@ -136,18 +134,18 @@ def choose_lanes(board, ticket, lanes, **extra):
             data[f"read_{slug}"] = "on"
         if post:
             data[f"post_{slug}"] = "on"
-    return TestClient(board.app, base_url=HTTPS).post("/oauth/authorize/lanes", data=data,
+    return board.anon().post("/oauth/authorize/lanes", data=data,
                                                       follow_redirects=False)
 
 
 def spend(board, code, verifier, redirect=CALLBACK):
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     return c.post("/oauth/token", data={"grant_type": "authorization_code", "code": code,
                                         "code_verifier": verifier, "redirect_uri": redirect})
 
 
 def test_discovery_documents(board):
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     res = c.get("/.well-known/oauth-protected-resource").json()
     assert res["resource"].endswith("/mcp") and res["authorization_servers"]
     meta = c.get("/.well-known/oauth-authorization-server").json()
@@ -156,7 +154,7 @@ def test_discovery_documents(board):
 
 
 def test_register_accepts_only_allowed_redirects(board):
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     ok = c.post("/oauth/register", json={"redirect_uris": [CALLBACK], "client_name": "Claude"})
     assert ok.status_code == 201 and ok.json()["client_id"].startswith("fp_")
     for bad in ("https://evil.example/cb", "http://evil.example:80/cb", "javascript:alert(1)"):
@@ -167,7 +165,7 @@ def test_register_accepts_only_allowed_redirects(board):
 
 def test_full_flow_ends_in_a_working_revocable_token(board):
     verifier, challenge = pkce()
-    page = TestClient(board.app, base_url=HTTPS).get(
+    page = board.anon().get(
         "/oauth/authorize", params=authorize_fields(challenge))
     assert page.status_code == 200 and "Connect to FuzzPan" in page.text
     assert f"form-action 'self' https://claude.ai" in page.headers["content-security-policy"]
@@ -185,7 +183,7 @@ def test_full_flow_ends_in_a_working_revocable_token(board):
     t = spend(board, q["code"][0], verifier)
     assert t.status_code == 200 and t.json()["token_type"] == "Bearer"
     token = t.json()["access_token"]
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     assert call(c, token, "board_whoami")["content"][0]["text"].startswith("Agent claude-chat")
     assert call(c, token, "board_read_lane", lane="engineering")["isError"]
 
@@ -251,7 +249,7 @@ def sign_in(board, agent="claude-chat"):
 
 
 def works(board, token):
-    return rpc(TestClient(board.app, base_url=HTTPS), token, "tools/list").status_code == 200
+    return rpc(board.anon(), token, "tools/list").status_code == 200
 
 
 def test_signing_in_again_adds_a_connection_and_disconnects_nothing(board):
@@ -262,7 +260,7 @@ def test_signing_in_again_adds_a_connection_and_disconnects_nothing(board):
     assert works(board, chat) and works(board, session)
     # Both are the same agent with the same rights.
     assert board.grant("alice", "engineering", "claude-chat").status_code == 200
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     for token in (chat, session):
         assert not call(c, token, "board_read_lane", lane="engineering").get("isError")
 
@@ -311,7 +309,7 @@ def test_a_reconnect_invite_leaves_oauth_connections_alone(board):
     oauth = sign_in(board, agent="coder")
     r = board.admin("alice").post("/v1/admin/principals/coder/reconnect")
     code = r.json()["code"]
-    new = TestClient(board.app, base_url=HTTPS).post(f"/v1/invites/{code}/redeem").json()
+    new = board.anon().post(f"/v1/invites/{code}/redeem").json()
     assert not works(board, cli.token)
     assert works(board, new["token"]) and works(board, oauth)
 
@@ -333,7 +331,7 @@ def code_from(r):
 
 
 def lanes_of(board, token):
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     return call(c, token, "board_whoami")["content"][0]["text"]
 
 
@@ -352,7 +350,7 @@ def test_a_new_agent_picks_lanes_and_can_use_them_at_once(board):
 
     r = choose_lanes(board, ticket_of(step), {"engineering": (True, True)})
     token = spend(board, code_from(r), verifier).json()["access_token"]
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     assert call(c, token, "board_post", lane="engineering", body="hi")["content"][0][
         "text"].startswith("posted #")
     assert call(c, token, "board_read_lane", lane="household")["isError"]
@@ -372,7 +370,7 @@ def test_shared_lanes_still_wait_for_the_other_admin(board):
     r = approve(board, "alice", challenge, lanes={"household": (True, True),
                                                   "engineering": (True, False)})
     token = spend(board, code_from(r), verifier).json()["access_token"]
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     assert not call(c, token, "board_read_lane", lane="engineering").get("isError")
     assert call(c, token, "board_read_lane", lane="household")["isError"]
     pending = board.admin("bob").get("/v1/admin/pending").json()
@@ -445,7 +443,7 @@ def test_chatgpt_callbacks_are_allowed_and_nothing_near_them(board):
                 "https://chatgpt.com.evil.example/connector_platform_oauth_redirect",
                 "http://chatgpt.com/connector_platform_oauth_redirect"):
         assert not redirect_allowed(bad), bad
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     assert c.post("/oauth/register", json={"redirect_uris": [CHATGPT]}).status_code == 201
 
 
@@ -454,7 +452,7 @@ def test_the_suggested_name_follows_the_app(board):
     assert default_agent(CHATGPT) == "chatgpt"
     assert default_agent("http://127.0.0.1:5555/callback") == "claude-code"
     _, challenge = pkce()
-    page = TestClient(board.app, base_url=HTTPS).get(
+    page = board.anon().get(
         "/oauth/authorize", params=authorize_fields(challenge, CHATGPT))
     assert 'name="agent" value="chatgpt"' in page.text
     assert "form-action 'self' https://chatgpt.com" in page.headers["content-security-policy"]
@@ -484,7 +482,7 @@ def test_a_suggested_name_taken_by_another_admin_becomes_your_own(board):
 
 
 def test_the_callback_names_the_issuer(board):
-    c = TestClient(board.app, base_url=HTTPS)
+    c = board.anon()
     meta = c.get("/.well-known/oauth-authorization-server").json()
     assert meta["authorization_response_iss_parameter_supported"] is True
     _, challenge = pkce()

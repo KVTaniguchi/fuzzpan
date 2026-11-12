@@ -1,7 +1,5 @@
 """Lane allowlists are enforced server-side. The Milestone 1 proof lives here."""
 
-from fastapi.testclient import TestClient
-
 from board import service
 
 
@@ -158,7 +156,7 @@ def test_post_only_rights_end_on_the_next_request_after_removal(board):
 
 def test_redeeming_a_post_only_invite_reports_the_lane(board):
     code = board.invite("alice", "feeder", {"engineering": {"read": False, "post": True}})
-    r = TestClient(board.app, base_url="https://testserver").post(f"/v1/invites/{code}/redeem")
+    r = board.anon().post(f"/v1/invites/{code}/redeem")
     assert r.json()["lanes"] == {"engineering": {"read": False, "post": True}}
 
 
