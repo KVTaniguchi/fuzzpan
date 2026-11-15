@@ -762,7 +762,8 @@ client/         board_client.py (standalone token client), cli.py (`board`
                 tools for Claude Code), render.py (text output, untrusted-data framing, and
                 the MCP instructions and tool descriptions both MCP servers share)
 scripts/        backup_offsite.sh (encrypted off-site backup), backup_pull.sh, smoke_compose.sh
-                (Docker end-to-end check), install.sh (server bootstrap), doctor.py (install check)
+                (Docker end-to-end check), install.sh (server bootstrap), doctor.py (install check),
+                update.sh (`fuzzpan-update`), update_remote.sh (it, over SSH), release.sh (tag a release)
 Dockerfile, docker-compose.yml, Caddyfile, .env.example   (see §10b)
 tests/          one file per area (tokens, permissions, accounts, invites, backup, ...)
 docs/           DESIGN.md, api.md, agents.md, setup-with-an-agent.md, run-locally-with-an-agent.md, siri-shortcuts.md, decisions/
@@ -911,6 +912,31 @@ cloning the repository or knowing Docker. Decisions and alternatives are in
   replaces the code and rebuilds. It does not provision or touch the firewall.
   A crash between start and provision is recoverable: the second run reports the
   admins exist and names `reset-admin`.
+- **Rolling back a failed upgrade.** Before replacing the code the script tars
+  the install folder (not `.env`). If `docker compose up --wait` then fails, it
+  saves the board's last 200 log lines to the install log, stops the board, puts
+  the old files back, rebuilds, and starts them. The database is restored from the
+  pre-upgrade backup only if its schema version (`PRAGMA user_version`) changed,
+  since the old code refuses a newer schema; otherwise it is kept, so posts written
+  while the new image built are not lost. A failed fresh install is not rolled back.
+- **Release record.** Each run writes `REPO=` and `REF=` to
+  `<dir>/.fuzzpan-release` and copies `scripts/update.sh` to
+  `/usr/local/bin/fuzzpan-update`.
+- **Updates (`fuzzpan-update`).** Reads the release record, asks GitHub's API for
+  the repository's newest *published release* (a bare tag is not one), and if it
+  differs downloads `install.sh` from that release and runs it with `--yes --ref`.
+  So the upgrade steps that run are always the new release's own. `--check` only
+  reports (no root needed); `--ref` picks a release; release names are checked
+  against `[A-Za-z0-9._/-]` with no `..`, including the one GitHub returns. It
+  never runs on a schedule: an update can change behaviour, so the owner chooses
+  when. `scripts/update_remote.sh` runs it over `ssh -t` from the owner's computer
+  (same character checks on `BOARD_SSH` and the folder as `backup_pull.sh`).
+- **Releases (maintainer).** `scripts/release.sh vX.Y.Z` fetches origin, refuses a
+  tag that exists or is not newer, runs the tests in a throwaway worktree of
+  `origin/main`, and tags that commit locally. It publishes nothing; it prints
+  `git push origin vX.Y.Z` and `gh release create vX.Y.Z --verify-tag
+  --generate-notes`. The version lives in the tag; `pyproject.toml`'s is not used.
+  Decision: `docs/decisions/0009-updates-from-releases.md`.
 - **The DNS check compares the domain with the addresses on this machine**, not
   with a lookup service, so nothing leaves the server for it. On a NAT'd cloud
   host that fails closed; `--skip-dns-check` is the person's explicit override.
@@ -934,11 +960,14 @@ cloning the repository or knowing Docker. Decisions and alternatives are in
 - **`docs/setup-with-an-agent.md`** is a file for the person's own agent to follow:
   what to ask, the exact commands, how to read each failure, and the limits (the
   agent buys nothing, handles no secret, and does not open the setup link). The
-  person does the sign-in. `tests/test_install_script.py` and
-  `tests/test_doctor.py` cover the logic with stand-in commands.
+  person does the sign-in. `tests/test_install_script.py`,
+  `tests/test_update_scripts.py` and `tests/test_doctor.py` cover the logic with
+  stand-in commands.
 - **Not yet run on a real server.** The tests replace apt, Docker, ufw and curl.
   Before relying on it: run `install.sh` on a throwaway VPS (and
   `scripts/smoke_compose.sh` on a Docker machine) and record the result here.
+  The same goes for `fuzzpan-update` and the rollback: try an update between two
+  real releases, and one to a release whose board fails its health check.
 
 ## 11. Open questions
 

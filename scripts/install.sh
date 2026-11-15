@@ -28,7 +28,10 @@
 # automatic security updates; downloads FuzzPan into the install folder; writes
 # .env; starts it; creates the admins and prints one single-use setup link each;
 # runs scripts/doctor.py. Run again, it upgrades: it takes a database backup
-# first and keeps your .env and data.
+# first and keeps your .env and data. If the upgraded board does not come up
+# healthy, it puts the previous files and that backup back and starts them again.
+# It also installs the command `fuzzpan-update` (scripts/update.sh), which later
+# updates to the newest release by running this script for that release.
 #
 # What it never does: buy anything, change DNS, change SSH settings, create or
 # print an agent token, ask for a password, publish the board's own port (8787),
@@ -125,6 +128,11 @@ command -v curl >/dev/null || { apt-get update -qq && apt-get install -y -qq cur
 
 UPGRADE=0
 [ -f "$DIR/docker-compose.yml" ] && UPGRADE=1
+BACKUP_FILE=""
+SCHEMA_BEFORE=""
+# Prints the database's schema version (migrations record it in user_version).
+SCHEMA_PY="import sqlite3; print(sqlite3.connect('/data/board.db').execute('PRAGMA user_version').fetchone()[0])"
+PREVIOUS_REF="$(sed -n 's/^REF=//p' "$DIR/.fuzzpan-release" 2>/dev/null | head -n 1 || true)"
 
 mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
 if [ "${mem_kb:-0}" -lt 900000 ]; then
@@ -252,6 +260,8 @@ if [ "$UPGRADE" -eq 1 ] && [ -n "$(dc ps -q board 2>/dev/null)" ]; then
     dc exec -T board python -m board.admin_cli backup "/data/pre-upgrade-$stamp.db" \
         || die "the backup failed, so nothing was changed. Fix that first."
     say "Saved inside the data volume as /data/pre-upgrade-$stamp.db (mode 600). It holds the same secrets as the database; delete it once the upgrade is confirmed."
+    BACKUP_FILE="/data/pre-upgrade-$stamp.db"
+    SCHEMA_BEFORE="$(dc exec -T board python -c "$SCHEMA_PY" 2>/dev/null || true)"
 fi
 
 # --------------------------------------------------------------- the source
@@ -269,10 +279,22 @@ done
 mkdir -p "$DIR"
 chmod 755 "$DIR"
 if [ "$UPGRADE" -eq 1 ]; then
+    # Keep the running version's files (not .env, which is never replaced) so a
+    # failed start can be undone.
+    tar -C "$DIR" --exclude=./.env -cf "$work/previous.tar" . \
+        || die "could not save a copy of the current files, so nothing was changed."
     rm -rf "$DIR/board" "$DIR/client" "$DIR/scripts" "$DIR/docs"
 fi
 cp -a "$work/src/." "$DIR/"
+printf 'REPO=%s\nREF=%s\n' "$REPO" "$REF" > "$DIR/.fuzzpan-release"
 say "Installed the files into $DIR."
+
+if [ -f "$DIR/scripts/update.sh" ]; then
+    mkdir -p "$ROOTFS/usr/local/bin"
+    cp "$DIR/scripts/update.sh" "$ROOTFS/usr/local/bin/fuzzpan-update"
+    chmod 755 "$ROOTFS/usr/local/bin/fuzzpan-update"
+    say "Installed the fuzzpan-update command (sudo fuzzpan-update updates to the newest release)."
+fi
 
 if [ "$UPGRADE" -eq 0 ]; then
     ( umask 077
@@ -282,8 +304,37 @@ fi
 
 # ------------------------------------------------------------------ start
 
+roll_back() {
+    step "The new version did not start: putting the previous one back"
+    { printf '%s\n' "--- board logs from the failed start of $REF"; dc logs --no-color --tail 200 board 2>&1; } \
+        >> "$LOG" 2>/dev/null || true
+    dc stop board >/dev/null 2>&1 || true
+    rm -rf "$DIR/board" "$DIR/client" "$DIR/scripts" "$DIR/docs"
+    tar -C "$DIR" -xf "$work/previous.tar" || return 1
+    dc build board || return 1
+    if [ -n "$BACKUP_FILE" ]; then
+        # Restore only if the new version migrated the database (the old code
+        # refuses a newer schema). Otherwise keep it: it may hold posts written
+        # while the new version was building.
+        schema_after="$(dc run --rm --no-deps -T board python -c "$SCHEMA_PY" 2>/dev/null || true)"
+        if [ -n "$SCHEMA_BEFORE" ] && [ "$schema_after" = "$SCHEMA_BEFORE" ]; then
+            say "The database was not changed by the new version; keeping it as it is."
+        else
+            say "Restoring the database from $BACKUP_FILE (posts made during the update are not in it)."
+            dc run --rm --no-deps -T board python -m board.admin_cli restore "$BACKUP_FILE" --force || return 1
+        fi
+    fi
+    dc up -d --wait || return 1
+}
+
 step "Starting the board (the first build takes a few minutes)"
-dc up -d --build --wait || die "the stack did not come up healthy. See: cd $DIR && docker compose logs"
+if ! dc up -d --build --wait; then
+    [ "$UPGRADE" -eq 1 ] || die "the stack did not come up healthy. See: cd $DIR && docker compose logs"
+    if roll_back; then
+        die "upgrading to $REF failed, so the previous version (${PREVIOUS_REF:-as installed before}) is running again. The failed start's logs are in $LOG; please report them."
+    fi
+    die "upgrading to $REF failed, and putting the previous version back failed too. The board may be down. The pre-upgrade backup is ${BACKUP_FILE:-not available (the board was not running)} in the data volume. See: cd $DIR && docker compose logs"
+fi
 
 ready=0
 say "Waiting for https://$DOMAIN to answer (the certificate is fetched on first contact)..."
@@ -335,6 +386,7 @@ Back up the board to YOUR computer, from a terminal there (not here):
   BOARD_SSH=root@${DOMAIN} BOARD_REMOTE_DIR=$DIR sh backup_pull.sh
 To check any time: python3 $DIR/scripts/doctor.py
 EOF
+    if [ -n "$PREVIOUS_REF" ]; then say "Updated from $PREVIOUS_REF to $REF."; else say "Now on $REF."; fi
     log "done, upgrade (doctor exit $doctor_rc)"
     exit "$doctor_rc"
 fi
@@ -350,7 +402,7 @@ cat <<EOF
      curl -fsSLO https://raw.githubusercontent.com/$REPO/$REF/scripts/backup_pull.sh
      BOARD_SSH=root@${DOMAIN} BOARD_REMOTE_DIR=$DIR sh backup_pull.sh
    Without a copy elsewhere, a lost server is a lost board.
-To upgrade later: run this script again. To check any time: python3 $DIR/scripts/doctor.py
+To update later: sudo fuzzpan-update (or run this script again). To check any time: python3 $DIR/scripts/doctor.py
 EOF
 log "done (doctor exit $doctor_rc)"
 exit "$doctor_rc"
