@@ -38,6 +38,37 @@ one, wait for the next.</p>
   </form>
 </div>
 
+<div class="card">
+  <h3>Passkeys</h3>
+  <p>A passkey lets you log in and approve apps with Face ID, Touch ID or your device's
+  PIN instead of typing your password and code. Your password and authenticator keep
+  working too.</p>
+  {% if passkeys %}
+  <table>
+    <tr><th>Name</th><th>Added</th><th>Last used</th><th></th></tr>
+    {% for key in passkeys %}
+    <tr><td>{{ key.label }}</td><td>{{ key.created_at|when }}</td>
+        <td>{{ key.last_used_at|when if key.last_used_at else "never" }}</td>
+        <td><form class="inline" method="post" action="/account/passkeys/remove">
+          <input type="hidden" name="credential_id" value="{{ key.credential_id }}">
+          <button>Remove</button></form></td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="meta">No passkeys yet.</p>
+  {% endif %}
+  <form method="post" action="/account/passkeys">
+    <input type="hidden" name="username" value="{{ who.id }}" autocomplete="username">
+    <p><label>Name for this passkey<br>
+      <input name="label" placeholder="e.g. Phone" maxlength="60"></label></p>
+    <p><label>Password<br>
+      <input type="password" name="password" autocomplete="current-password" required></label></p>
+    <p><label>Code from your authenticator<br>
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" required></label></p>
+    <p><button class="primary">Add a passkey</button></p>
+  </form>
+</div>
+
 <p class="meta">Saving either change logs out every other browser where you are logged
 in. Lost your password or your authenticator? That can't be fixed from here, because
 the board has no way to know it's you: ask whoever runs the board's server to reset

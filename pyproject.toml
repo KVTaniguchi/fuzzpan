@@ -13,6 +13,7 @@ dependencies = [
     "mcp>=2.3",
     "pyotp>=2.10.0",
     "segno>=1.6.6",
+    "webauthn>=3.0.1",
 ]
 
 [project.scripts]

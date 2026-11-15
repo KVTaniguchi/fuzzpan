@@ -5,9 +5,9 @@ ordinary agent bearer token, so everything about agent tokens still holds: store
 only as a hash, checked on every request, revoked instantly, never cached.
 
 Flow: the client finds us through the .well-known documents, is told where to send
-the admin, and the admin proves who they are (password and authenticator code) on
-our own page and approves a named agent. That makes a one-time code bound to the
-client's PKCE challenge and redirect address. The client spends the code at the
+the admin, and the admin proves who they are (password and authenticator code, or
+a passkey, decisions/0008) on our own page and approves a named agent. That makes a
+one-time code bound to the client's PKCE challenge and redirect address. The client spends the code at the
 token endpoint, which is the moment the agent is registered (if new) and given a new
 connection token, returned once. A sign-in never replaces another connection's token
 (decisions/0005).
@@ -31,7 +31,7 @@ from fastapi import Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from board import service
+from board import passkeys, service
 from board.db import connect
 from board.service import BoardError
 
@@ -243,24 +243,38 @@ def install(app, public_base, render, throttle, client_key, sentence):
         suggested = default_agent(params["redirect_uri"])
         agent = params["agent"].strip().lower() or suggested
 
+        assertion = str(form.get("passkey", ""))
+
+        def prove(conn):
+            """The admin approving, from a passkey (decisions/0008) or from password
+            and code. Proof only: no browser session is left behind."""
+            if assertion:
+                rp_id, origin = passkeys.relying_party(public_base(request))
+                return passkeys.prove(conn, assertion, rp_id, origin, client_key(request),
+                                      logging_in=True)
+            session = service.login(conn, str(form.get("username", "")),
+                                    str(form.get("password", "")),
+                                    str(form.get("code", "")), client_key(request))
+            if session is None:
+                return None
+            admin = service.session_admin(conn, session)
+            service.logout(conn, session)
+            return admin.id
+
         def decide():
             with connect(app.state.db_path) as conn:
                 throttle(conn, request, "oauth-authorize")
-                session = service.login(conn, str(form.get("username", "")),
-                                        str(form.get("password", "")),
-                                        str(form.get("code", "")), client_key(request))
-                if session is not None:
-                    return grant(conn, session)
+                owner = prove(conn)
+                if owner is not None:
+                    return grant(conn, owner)
             # Raised only after the block above has committed, so the failed attempt
             # and the throttle count are kept and the login lockout applies here too.
-            raise BoardError(401, "Wrong username, password or code, or the "
+            raise BoardError(401, "That passkey didn't work here, or the account is "
+                                  "locked." if assertion else
+                                  "Wrong username, password or code, or the "
                                   "account is locked.")
 
-        def grant(conn, session):
-            # Proof only: no browser session is created, so nothing is left behind.
-            admin = service.session_admin(conn, session)
-            service.logout(conn, session)
-            owner = admin.id
+        def grant(conn, owner):
             name = agent
             existing = _principal(conn, name)
             if name == suggested and existing is not None and existing["owner"] != owner:

@@ -10,5 +10,12 @@
     <p><input name="code" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" required></p>
     <p><button>Log in</button></p>
   </form>
+  <form id="passkey-form" method="post" action="/login/passkey">
+    <input type="hidden" name="credential">
+    <p><button type="button" class="primary" hidden data-passkey="login" data-form="passkey-form"
+               data-field="credential" data-status="passkey-status">Log in with a passkey</button></p>
+    <p class="meta" id="passkey-status" role="status"></p>
+  </form>
 </div>
+<script src="/static/passkey.js" defer></script>
 {% endblock %}

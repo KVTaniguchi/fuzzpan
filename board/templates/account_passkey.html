@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Add a passkey · FuzzPan{% endblock %}
+{% block main %}
+<div class="card" style="max-width:420px;margin:24px auto">
+  <h2>Add a passkey</h2>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <p>Your device will ask for Face ID, Touch ID or its PIN, then save a passkey for
+  this board named <strong>{{ label }}</strong>.</p>
+  <form id="passkey-register-form" method="post" action="/account/passkeys/finish">
+    <input type="hidden" name="credential">
+    <input type="hidden" name="label" value="{{ label }}">
+    <p><button type="button" class="primary" hidden data-passkey="register"
+               data-form="passkey-register-form" data-field="credential"
+               data-status="passkey-status" data-options="{{ options }}">Create the passkey</button></p>
+    <p class="meta" id="passkey-status" role="status"></p>
+  </form>
+  <noscript><p class="error">Adding a passkey needs JavaScript.</p></noscript>
+  <p class="meta">This works for {{ minutes }} minutes, in this browser only.</p>
+  <p><a href="/account">Cancel</a></p>
+</div>
+<script src="/static/passkey.js" defer></script>
+{% endblock %}
