@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from board import limits, mcp_http, oauth, passkeys, service
+from board import limits, mcp_http, oauth, passkeys, presets, service
 from board.admin_view import build_admin_view, grants_notice
 from board.db import connect, init_db
 from board.service import BoardError
@@ -694,18 +694,24 @@ def create_app(db_path, secure_cookies=True):
                       view=build_admin_view(agents, invites, lanes, pending),
                       audit=service.list_audit(conn, who, limit=50))
 
-    def invite_form(request, conn, who, display_name="", ticked=None, error=None, status=200):
-        """The invite form. Without `ticked`, shared lanes start with read and
-        post on and private lanes off."""
+    def admin_lanes_of(conn, who):
+        return [l for l in service.list_admin_lanes(conn, who) if l["administers"]]
+
+    def invite_form(request, conn, who, display_name="", ticked=None, chosen=None,
+                    error=None, status=200):
+        """The invite form: built-in presets first, the first one picked, then "Choose
+        my own" (decisions/0010). Without `ticked`, its shared lanes start with read
+        and post on and private lanes off."""
         lanes = []
-        for l in service.list_admin_lanes(conn, who):
-            if not l["administers"]:
-                continue
+        for l in admin_lanes_of(conn, who):
             read, post = ticked.get(l["slug"], (False, False)) if ticked is not None \
                 else (l["scope"] == "shared",) * 2
             lanes.append({**l, "read": read, "post": post})
+        offered = presets.presets(lanes)
+        if chosen is None or chosen not in {p["id"] for p in offered} | {presets.CUSTOM}:
+            chosen = offered[0]["id"] if offered else presets.CUSTOM
         return render(request, "invite_new.html", status_code=status, who=who, lanes=lanes,
-                      display_name=display_name, error=error)
+                      presets=offered, chosen=chosen, display_name=display_name, error=error)
 
     def link_page(request, who, made, display_name, reconnect=False):
         return render(request, "invite_created.html", who=who, display_name=display_name,
@@ -726,13 +732,27 @@ def create_app(db_path, secure_cookies=True):
             if right in ("read", "post") and slug:
                 ticked.setdefault(slug, [False, False])[right == "post"] = True
         lanes = {slug: {"read": r, "post": p} for slug, (r, p) in ticked.items()}
+        # No preset field (an older page or a script) means the ticks decide, as before.
+        chosen = form.get("preset")
+        chosen = chosen if isinstance(chosen, str) else presets.CUSTOM
+
+        def make():
+            want = lanes
+            if chosen != presets.CUSTOM:
+                # The preset decides, worked out from the lanes the admin administers
+                # now; any ticks sent with it are ignored.
+                want = presets.expand(admin_lanes_of(conn, who), chosen)
+                if want is None:
+                    raise BoardError(400, "That preset isn't offered. Pick another.")
+            return service.create_invite(conn, who, name, want)
         try:
-            made = await run_in_threadpool(service.create_invite, conn, who, name, lanes)
+            made = await run_in_threadpool(make)
         except BoardError as e:
             # A person is looking at this: show the form again, not JSON.
             return await run_in_threadpool(
                 invite_form, request, conn, who, display_name=name,
-                ticked={s: tuple(v) for s, v in ticked.items()},
+                ticked=None if chosen != presets.CUSTOM
+                else {s: tuple(v) for s, v in ticked.items()}, chosen=chosen,
                 error=e.message, status=e.status)
         return link_page(request, who, made, name.strip())
 

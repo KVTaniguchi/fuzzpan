@@ -31,7 +31,7 @@ from fastapi import Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from board import passkeys, service
+from board import passkeys, presets, service
 from board.db import connect
 from board.service import BoardError
 
@@ -189,8 +189,10 @@ def install(app, public_base, render, throttle, client_key, sentence):
                        params["redirect_uri"])
 
     def lanes_page(request, ticket, agent, params, lanes, others):
+        offered = presets.presets(lanes)
         return secured(render(request, "oauth_lanes.html", ticket=ticket, agent=agent,
-                              lanes=lanes, others=others,
+                              lanes=lanes, others=others, presets=offered,
+                              chosen=offered[0]["id"] if offered else presets.CUSTOM,
                               origin=_origin(params["redirect_uri"])),
                        params["redirect_uri"])
 
@@ -216,10 +218,11 @@ def install(app, public_base, render, throttle, client_key, sentence):
         return code
 
     def lane_choices(conn, owner):
-        """The lanes this admin administers, for the lane step. Shared lanes start
-        ticked and private ones don't, as on the invite form. Rule 7: nothing else."""
+        """The lanes this admin administers, for the lane step. Under "Choose my own",
+        shared lanes start ticked and private ones don't, as on the invite form. Rule 7:
+        nothing else."""
         admin = service.Caller(owner, "human", owner)
-        return [{**l, "ticked": l["scope"] == "shared"}
+        return [{**l, "read": l["scope"] == "shared", "post": l["scope"] == "shared"}
                 for l in service.list_admin_lanes(conn, admin) if l["administers"]]
 
     keep = ("response_type", "client_id", "redirect_uri", "code_challenge",
@@ -324,6 +327,10 @@ def install(app, public_base, render, throttle, client_key, sentence):
             right, _, slug = key.partition("_")
             if right in ("read", "post") and slug:
                 ticked.setdefault(slug, {"read": False, "post": False})[right] = True
+        # No preset field (an older page or a script) means the ticks decide, as before.
+        preset = str(form.get("preset", presets.CUSTOM))
+        if preset != presets.CUSTOM and preset not in presets.IDS:
+            raise BoardError(400, "unknown preset")
 
         def decide():
             with connect(app.state.db_path) as conn:
@@ -334,8 +341,14 @@ def install(app, public_base, render, throttle, client_key, sentence):
                 params = json.loads(row["params_json"])
                 if form.get("deny"):
                     return params, None
-                allowed = {l["slug"] for l in lane_choices(conn, row["owner"])}
-                lanes = {slug: want for slug, want in ticked.items() if slug in allowed}
+                choices = lane_choices(conn, row["owner"])
+                if preset == presets.CUSTOM:
+                    allowed = {l["slug"] for l in choices}
+                    lanes = {slug: want for slug, want in ticked.items() if slug in allowed}
+                else:
+                    # Worked out again from the lanes the admin administers now; the
+                    # ticks are ignored. A preset no longer offered gives nothing.
+                    lanes = presets.expand(choices, preset) or {}
                 return params, make_code(conn, row["owner"], row["agent_id"], params, lanes)
 
         params, code = await run_in_threadpool(decide)

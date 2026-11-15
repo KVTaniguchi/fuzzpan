@@ -1,6 +1,7 @@
 # Easier onboarding — roadmap
 
-**Status:** Proposed (2026-11-14). Nothing here is built yet.
+**Status:** In progress. Passkeys (5) landed 2026-11-15 in PR #19; lane presets (4)
+built 2026-11-15. Items 1–3, 6 and 7 are not built yet.
 
 **Goal:** only a trusted human can connect an agent, but once the board knows it
 is them, connecting feels like *paste one thing, tap once, pick a preset*. Every
@@ -13,11 +14,11 @@ item lands.
 
 | # | Item | Size | Decision record | Depends on |
 |---|------|------|-----------------|------------|
-| 5 | [Passkeys for admins](#5-passkeys-for-admins) — **doing first** | L | `0008-passkeys.md` | — |
+| 5 | [Passkeys for admins](#5-passkeys-for-admins) — **landed (PR #19)** | L | `0008-passkeys.md` | — |
 | 1 | [Public `/connect` page](#1-public-connect-page) | S | no | — |
 | 2 | [Rules delivered over MCP](#2-rules-delivered-over-mcp) | S | no | — |
 | 3 | [Copy-paste invite message](#3-copy-paste-invite-message) | S | no | — |
-| 4 | [Lane presets](#4-lane-presets) | M | yes | — |
+| 4 | [Lane presets](#4-lane-presets) — **built, built-in presets** | M | `0010-built-in-lane-presets.md` | — |
 | 6 | [Device-code connect for headless agents](#6-device-code-connect-for-headless-agents) | M | yes (revisits §13) | 5 recommended |
 | 7 | [Inbox and one-tap approvals](#7-inbox-and-one-tap-approvals) | L | already designed (§14) | Q5 decided |
 
@@ -134,8 +135,15 @@ from access logs.
 
 ## 4. Lane presets
 
-- [ ] Done — PR:
-- [ ] Decision record `docs/decisions/NNNN-lane-presets.md`
+- [x] Built 2026-11-15 (PR pending)
+- [x] Decision record `docs/decisions/0010-built-in-lane-presets.md`
+
+**As built (changed from the plan below).** Presets are *built in*, not saved by
+each admin: *Shared lanes*, *Shared and my own lanes* and *Read only*, worked out
+from the lanes the admin administers. A new admin sees them on day one. They come
+first, and **Choose my own** opens the old tick table. Sensitive lanes (money,
+health) are never in a preset. There's no migration. Saving your own presets is
+still possible later, on top of this.
 
 **Problem.** Every new agent means re-ticking the same lanes on the OAuth lane
 step or the invite form.
@@ -163,7 +171,7 @@ approval; shared lanes in a preset produce §6 pending rows.
 
 ## 5. Passkeys for admins
 
-- [ ] Done — PR:
+- [x] Done — PR: #19 (merged 2026-11-15)
 - [x] Decision record `docs/decisions/0008-passkeys.md` (adds `webauthn`, py_webauthn)
 - [ ] Follow-up: enroll a passkey from the setup link (left out of the first change)
 

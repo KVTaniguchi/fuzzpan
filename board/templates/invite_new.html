@@ -9,18 +9,8 @@
       <input id="display_name" name="display_name" value="{{ display_name }}" maxlength="80"
              autocomplete="off" required style="width:100%"></p>
     <p><strong>Which lanes can it use?</strong></p>
-    <div class="scroll">
-    <table>
-      <tr><th>Lane</th><th>Read</th><th>Post</th></tr>
-      {% for l in lanes %}
-      <tr><td>{{ l.name }}<br><span class="meta">{{ l.slug }} · {{ "shared" if l.scope == "shared" else "private" }}</span></td>
-        <td><input type="checkbox" name="read_{{ l.slug }}" aria-label="Read {{ l.name }}"{{ " checked" if l.read }}></td>
-        <td><input type="checkbox" name="post_{{ l.slug }}" aria-label="Post to {{ l.name }}"{{ " checked" if l.post }}></td></tr>
-      {% endfor %}
-    </table>
-    </div>
-    <p class="meta">Shared lanes start ticked; your private lanes do not. Rights on a shared lane
-    may need the other admin's approval.</p>
+    {% include "_lane_picker.html" %}
+    <p class="meta">Rights on a shared lane may need the other admin's approval.</p>
     <p><button class="primary">Create link</button> <a href="/admin">Cancel</a></p>
   </form>
 </section>

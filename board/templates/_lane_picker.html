@@ -1,0 +1,40 @@
+{# Built-in presets first, then "Choose my own" with the tick table (decisions/0010).
+   Needs: presets, chosen, lanes (each with read and post). No script: the table shows
+   when "Choose my own" is picked, by CSS alone. #}
+<style>
+  .picker > .choice { display:block; padding:8px 10px; margin:0 0 8px;
+                      border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+  .picker > input[type=radio] { position:absolute; opacity:0; }
+  .picker > input[type=radio]:checked + .choice { border-color:var(--accent);
+                                                   box-shadow:0 0 0 1px var(--accent); }
+  .picker > input[type=radio]:focus-visible + .choice { outline:2px solid var(--accent); }
+  .picker > .own { display:none; margin-top:8px; }
+  .picker > #preset-custom:checked ~ .own { display:block; }
+</style>
+<div class="picker">
+  {% if presets %}
+  {% for p in presets %}
+  <input type="radio" id="preset-{{ p.id }}" name="preset" value="{{ p.id }}"{{ " checked" if chosen == p.id }}>
+  <label class="choice" for="preset-{{ p.id }}"><strong>{{ p.name }}</strong><br>
+    <span class="meta">{{ p.summary }} {{ p.lane_names | join(", ") }}.</span></label>
+  {% endfor %}
+  <input type="radio" id="preset-custom" name="preset" value="custom"{{ " checked" if chosen == "custom" }}>
+  <label class="choice" for="preset-custom"><strong>Choose my own</strong><br>
+    <span class="meta">Tick lanes one by one. Money and health lanes are only here.</span></label>
+  {% else %}
+  <input type="hidden" id="preset-custom" name="preset" value="custom">
+  {% endif %}
+  <div class="own"{% if not presets %} style="display:block"{% endif %}>
+    <div class="scroll">
+    <table>
+      <tr><th>Lane</th><th>Read</th><th>Post</th></tr>
+      {% for l in lanes %}
+      <tr><td>{{ l.name }}<br><span class="meta">{{ l.slug }} · {{ "shared" if l.scope == "shared" else "private" }}</span></td>
+        <td><input type="checkbox" name="read_{{ l.slug }}" aria-label="Read {{ l.name }}"{{ " checked" if l.read }}></td>
+        <td><input type="checkbox" name="post_{{ l.slug }}" aria-label="Post to {{ l.name }}"{{ " checked" if l.post }}></td></tr>
+      {% endfor %}
+    </table>
+    </div>
+    <p class="meta">Shared lanes start ticked; your private lanes do not.</p>
+  </div>
+</div>

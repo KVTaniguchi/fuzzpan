@@ -925,7 +925,8 @@ def list_admin_lanes(conn, caller):
         grants = conn.execute("SELECT principal_id, can_read, can_post FROM grants "
                               "WHERE lane_id = ? ORDER BY principal_id", (lane["id"],)).fetchall()
         out.append({"slug": lane["slug"], "name": lane["name"], "scope": lane["scope"],
-                    "notice": lane["notice"], "administers": administers(caller, lane),
+                    "notice": lane["notice"], "sensitive": bool(lane["sensitive"]),
+                    "administers": administers(caller, lane),
                     "grants": [{"principal": g["principal_id"], "read": bool(g["can_read"]),
                                 "post": bool(g["can_post"])} for g in grants]})
     return out

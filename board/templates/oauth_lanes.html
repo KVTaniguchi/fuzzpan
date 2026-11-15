@@ -4,22 +4,14 @@
 <div class="card" style="max-width:520px;margin:48px auto">
   <h2>Which lanes can {{ agent }} use?</h2>
   <p>The app at <strong>{{ origin }}</strong> will connect as <strong>{{ agent }}</strong>.
-     It gets only what you tick here. Change it later in Admin.</p>
+     It gets only what you pick here. Change it later in Admin.</p>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/oauth/authorize/lanes">
     <input type="hidden" name="ticket" value="{{ ticket }}">
     {% if lanes %}
-    <div class="scroll">
-    <table>
-      <tr><th>Lane</th><th>Read</th><th>Post</th></tr>
-      {% for l in lanes %}
-      <tr><td>{{ l.name }}<br><span class="meta">{{ l.slug }} · {{ "shared" if l.scope == "shared" else "private" }}</span></td>
-        <td><input type="checkbox" name="read_{{ l.slug }}" aria-label="Read {{ l.name }}"{{ " checked" if l.ticked }}></td>
-        <td><input type="checkbox" name="post_{{ l.slug }}" aria-label="Post to {{ l.name }}"{{ " checked" if l.ticked }}></td></tr>
-      {% endfor %}
-    </table>
-    </div>
-    {% if others %}<p class="meta">Shared lanes start ticked; your private lanes do not.
-       Rights on a shared lane may wait for {{ others | join(" or ") }} to approve.</p>{% endif %}
+    {% include "_lane_picker.html" %}
+    {% if others %}<p class="meta">Rights on a shared lane may wait for
+       {{ others | join(" or ") }} to approve.</p>{% endif %}
     {% else %}
     <p class="meta">You don't administer any lanes yet, so it starts with none.</p>
     {% endif %}
