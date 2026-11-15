@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Connect an app · FuzzPan{% endblock %}
+{# Public: no session needed. Nothing secret, and no lane or agent names (rule 7).
+   Signing in still happens on /oauth/authorize. #}
+{% block main %}
+<section class="card">
+  <h2>Connect an app to this board</h2>
+  <p>Pick your app and copy one thing. The app then sends you to this board to sign
+     in as an admin and choose what it may use. Nothing is connected until you approve.</p>
+</section>
+
+<section class="card" id="claude-chat">
+  <h3>Claude (claude.ai and the apps)</h3>
+  <p><label for="mcp-url-chat">Connector URL</label><br>
+    <input id="mcp-url-chat" value="{{ mcp_url }}" readonly style="width:100%"></p>
+  <p><button type="button" class="primary" data-copy="mcp-url-chat">Copy URL</button></p>
+  <ol>
+    <li>In Claude: Settings, Connectors, add a custom connector with this URL. Leave any
+        client id and secret blank.</li>
+    <li>Claude sends you to this board. Approve with a passkey, or your username,
+        password and authenticator code.</li>
+    <li>Pick a lane preset (or choose your own) and approve.</li>
+  </ol>
+</section>
+
+<section class="card" id="claude-code">
+  <h3>Claude Code</h3>
+  <p><label for="cc-command">Run this once in a terminal</label><br>
+    <input id="cc-command" value="{{ claude_code_command }}" readonly style="width:100%"></p>
+  <p><button type="button" class="primary" data-copy="cc-command">Copy command</button></p>
+  <p>Then, in a Claude Code session, run <code>/mcp</code> and choose
+     <strong>authenticate</strong>. Your browser opens this board to sign in and approve.</p>
+</section>
+
+<section class="card" id="chatgpt">
+  <h3>ChatGPT</h3>
+  <p class="notice">This has not been tested end to end with a real ChatGPT yet.</p>
+  <p><label for="mcp-url-chatgpt">Server URL</label><br>
+    <input id="mcp-url-chatgpt" value="{{ mcp_url }}" readonly style="width:100%"></p>
+  <p><button type="button" class="primary" data-copy="mcp-url-chatgpt">Copy URL</button></p>
+  <ol>
+    <li>Find where your plan adds a custom MCP server: developer mode in ChatGPT's
+        connector settings, or ChatGPT Plugins in newer versions. Some plans don't
+        offer it.</li>
+    <li>Add one with this URL and OAuth sign-in. Leave any client id and secret blank.</li>
+    <li>Sign in on this board when ChatGPT sends you here, pick a lane preset and approve.</li>
+  </ol>
+</section>
+
+<section class="card" id="other">
+  <h3>Any other agent</h3>
+  <p>Ask an admin of this board for an <strong>invite link</strong>. It works once and
+     expires in an hour. Give it to the agent: the link's own page tells the agent the
+     exact request to make, and nothing needs installing.</p>
+</section>
+<script src="/static/copy.js"></script>
+{% endblock %}
