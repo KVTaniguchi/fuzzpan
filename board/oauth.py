@@ -92,6 +92,26 @@ def _s256(verifier):
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
 
+def _principal(conn, name):
+    return conn.execute("SELECT kind, owner, status FROM principals WHERE id = ?",
+                        (name,)).fetchone()
+
+
+def _owners_active_agent(row, owner):
+    return (row["kind"], row["owner"], row["status"]) == ("agent", owner, "active")
+
+
+def _claim(conn, table, column, secret):
+    """Spend a one-time secret: its row, deleted as it is read, so concurrent spends
+    have exactly one winner. None if it is unknown, expired or already spent."""
+    row = conn.execute(f"SELECT * FROM {table} WHERE {column} = ?",
+                       (service._hash_token(secret),)).fetchone()
+    claimed = row is not None and conn.execute(
+        f"DELETE FROM {table} WHERE {column} = ? AND expires_at > ?",
+        (row[column], service._now())).rowcount
+    return row if claimed else None
+
+
 def _oauth_error(code, status=400, description=None):
     body = {"error": code}
     if description:
@@ -242,20 +262,17 @@ def install(app, public_base, render, throttle, client_key, sentence):
             service.logout(conn, session)
             owner = admin.id
             name = agent
-            existing = conn.execute("SELECT kind, owner, status FROM principals "
-                                    "WHERE id = ?", (name,)).fetchone()
+            existing = _principal(conn, name)
             if name == suggested and existing is not None and existing["owner"] != owner:
                 # Another admin already uses the suggested name (both have ChatGPT, say):
                 # suggest this admin's own, rather than refusing a name they never typed.
                 name = f"{owner}-{suggested}"
-                existing = conn.execute("SELECT kind, owner, status FROM principals "
-                                        "WHERE id = ?", (name,)).fetchone()
+                existing = _principal(conn, name)
             if existing is None:
                 if not name.replace("-", "").isalnum() or len(name) > 64:
                     raise BoardError(400, "the agent name may use letters, digits "
                                           "and hyphens only")
-            elif (existing["kind"], existing["owner"], existing["status"]) != \
-                    ("agent", owner, "active"):
+            elif not _owners_active_agent(existing, owner):
                 raise BoardError(409, "that name belongs to something that is not your "
                                       "active agent; pick another name")
             has_lanes = existing is not None and conn.execute(
@@ -297,13 +314,8 @@ def install(app, public_base, render, throttle, client_key, sentence):
         def decide():
             with connect(app.state.db_path) as conn:
                 throttle(conn, request, "oauth-authorize")
-                row = conn.execute("SELECT * FROM oauth_approvals WHERE ticket_hash = ?",
-                                   (service._hash_token(str(form.get("ticket", ""))),)
-                                   ).fetchone()
-                claimed = row is not None and conn.execute(
-                    "DELETE FROM oauth_approvals WHERE ticket_hash = ? AND expires_at > ?",
-                    (row["ticket_hash"], service._now())).rowcount
-                if not claimed:
+                row = _claim(conn, "oauth_approvals", "ticket_hash", str(form.get("ticket", "")))
+                if row is None:
                     return None, None
                 params = json.loads(row["params_json"])
                 if form.get("deny"):
@@ -345,13 +357,8 @@ def install(app, public_base, render, throttle, client_key, sentence):
                 throttle(conn, request, "oauth-token")
                 if grant_type != "authorization_code":
                     return _oauth_error("unsupported_grant_type")
-                # One atomic claim: concurrent spends have exactly one winner.
-                row = conn.execute("SELECT * FROM oauth_codes WHERE code_hash = ?",
-                                   (service._hash_token(code),)).fetchone()
-                claimed = row is not None and conn.execute(
-                    "DELETE FROM oauth_codes WHERE code_hash = ? AND expires_at > ?",
-                    (row["code_hash"], service._now())).rowcount
-                if not claimed:
+                row = _claim(conn, "oauth_codes", "code_hash", code)
+                if row is None:
                     return _oauth_error("invalid_grant")
                 if (row["redirect_uri"] != redirect_uri or not code_verifier
                         or len(code_verifier) > 200
@@ -362,13 +369,11 @@ def install(app, public_base, render, throttle, client_key, sentence):
                         is None:
                     return _oauth_error("invalid_grant")
                 admin = service.Caller(owner, "human", owner)
-                existing = conn.execute("SELECT kind, owner, status FROM principals "
-                                        "WHERE id = ?", (agent,)).fetchone()
+                existing = _principal(conn, agent)
                 if existing is None:
                     service.register_agent(conn, admin, agent, row["display_name"],
                                            with_token=False)
-                elif (existing["kind"], existing["owner"], existing["status"]) != \
-                        ("agent", owner, "active"):
+                elif not _owners_active_agent(existing, owner):
                     return _oauth_error("invalid_grant")
                 # A new connection, never a replacement: other sessions stay connected.
                 secret = service.add_agent_connection(conn, agent)
