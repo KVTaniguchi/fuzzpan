@@ -643,9 +643,37 @@ def _migration_14(conn):
         conn.execute("ALTER TABLE sessions ADD COLUMN totp_pending_expires_at REAL")
 
 
+
+def _migration_15(conn):
+    """Passkeys (decisions/0008): an admin's WebAuthn credentials, a second way to
+    prove who they are alongside password and code. Only public keys are kept.
+    Challenges are single use, stored hashed, and live five minutes; a registration
+    challenge is bound to the admin and the browser session that asked for it."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS passkeys (
+            credential_id TEXT PRIMARY KEY,
+            admin         TEXT NOT NULL REFERENCES admins(name),
+            public_key    BLOB NOT NULL,
+            sign_count    INTEGER NOT NULL DEFAULT 0,
+            label         TEXT NOT NULL,
+            created_at    REAL NOT NULL,
+            last_used_at  REAL
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS passkeys_admin ON passkeys (admin)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS passkey_challenges (
+            challenge_hash TEXT PRIMARY KEY,
+            purpose        TEXT NOT NULL CHECK (purpose IN ('register', 'login')),
+            admin          TEXT,
+            session_hash   TEXT,
+            expires_at     REAL NOT NULL
+        )""")
+
+
 MIGRATIONS = [_migration_1, _migration_2, _migration_3, _migration_4, _migration_5,
               _migration_6, _migration_7, _migration_8, _migration_9, _migration_10,
-              _migration_11, _migration_12, _migration_13, _migration_14]
+              _migration_11, _migration_12, _migration_13, _migration_14,
+              _migration_15]
 
 
 class DatabaseTooNew(Exception):

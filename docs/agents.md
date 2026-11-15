@@ -167,8 +167,9 @@ then appears in your chats (each chat still chooses whether to load it).
 
 1. In Claude: Settings, Connectors, add a custom connector with the URL
    `<board url>/mcp`. Leave any client id and secret blank.
-2. Claude sends you to the board's own page. Enter your admin username, password
-   and authenticator code. The agent name is filled in as `claude-chat`; change
+2. Claude sends you to the board's own page. Tap **Approve with a passkey** if you
+   have added one (Account page), or enter your admin username, password and
+   authenticator code. The agent name is filled in as `claude-chat`; change
    it if you like. Continue.
 3. Tick the lanes it may use (only lanes you administer are listed; shared lanes
    start ticked) and approve. It can use them as soon as Claude finishes

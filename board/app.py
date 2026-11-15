@@ -8,19 +8,20 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import segno
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from board import limits, mcp_http, oauth, service
+from board import limits, mcp_http, oauth, passkeys, service
 from board.admin_view import build_admin_view, grants_notice
 from board.db import connect, init_db
 from board.service import BoardError
@@ -126,6 +127,14 @@ def rights_change(change):
 TEMPLATES.env.filters["rights_change"] = rights_change
 
 
+def when(seconds):
+    """A stored epoch time as a UTC date and minute, for tables on the admin's pages."""
+    return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+TEMPLATES.env.filters["when"] = when
+
+
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
        "img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -176,7 +185,8 @@ def create_app(db_path, secure_cookies=True):
         """The API always answers {"error": ...}. Everywhere else a person is
         reading, so they get a plain page with a way back, never raw JSON."""
         path = request.url.path
-        if path.startswith(("/v1/", "/mcp", "/oauth/token", "/oauth/register")) \
+        if path.startswith(("/v1/", "/mcp", "/oauth/token", "/oauth/register",
+                            "/passkey/options")) \
                 or path == "/healthz":
             return JSONResponse({"error": message}, status_code=status, headers=headers)
         who = await run_in_threadpool(session_who, request)
@@ -428,6 +438,28 @@ def create_app(db_path, secure_cookies=True):
             return resp
         return with_session(RedirectResponse("/", status_code=303), token)
 
+    @app.post("/passkey/options")
+    def passkey_options(request: Request, conn=get_db):
+        """A login challenge for the browser (decisions/0008). Needs no session."""
+        throttle(conn, request, "passkey")
+        rp_id, _ = passkeys.relying_party(public_base(request))
+        return Response(passkeys.login_options(conn, rp_id), media_type="application/json")
+
+    @app.post("/login/passkey")
+    def login_passkey(request: Request, credential: str = Form(""), conn=get_db):
+        try:
+            throttle(conn, request, "login")
+        except BoardError as e:
+            return render(request, "login.html", error=sentence(e.message), notice=None,
+                          status_code=e.status)
+        rp_id, origin = passkeys.relying_party(public_base(request))
+        token = passkeys.login(conn, credential, rp_id, origin, client_key(request))
+        if token is None:
+            return render(request, "login.html", notice=None, status_code=401,
+                          error="That passkey didn't work here, or the account is locked. "
+                                "Try again, or use your password and code.")
+        return with_session(RedirectResponse("/", status_code=303), token)
+
     def setup_view(request, conn, token, error=None, status=200):
         """The setup page, or a 410 page when the link is expired or used."""
         try:
@@ -484,19 +516,23 @@ def create_app(db_path, secure_cookies=True):
                     "logged out.",
         "authenticator": "Authenticator replaced: use the new one from now on. Every "
                          "other browser logged in as you has been logged out.",
+        "passkey": "Passkey added. You can use it to log in and to approve apps.",
+        "passkey-removed": "Passkey removed.",
     }
 
-    def account_view(request, who, error=None, status=200):
+    def account_view(request, conn, who, error=None, status=200):
         notice = ACCOUNT_DONE.get(request.query_params.get("done", ""))
+        keys = passkeys.list_passkeys(conn, who)
         return render(request, "account.html", who=who, error=error, notice=notice,
-                      min_chars=service.MIN_PASSWORD_CHARS, status_code=status)
+                      min_chars=service.MIN_PASSWORD_CHARS, passkeys=keys,
+                      status_code=status)
 
     @app.get("/account")
     def account_page(request: Request, conn=get_db):
         who = page_admin(request, conn)
         if who is None:
             return to_login()
-        return account_view(request, who)
+        return account_view(request, conn, who)
 
     @app.post("/account/password")
     def account_password(request: Request, current_password: str = Form(...),
@@ -514,9 +550,9 @@ def create_app(db_path, secure_cookies=True):
             token = service.change_password(conn, who, current_password, code,
                                             new_password, client_key(request))
         except BoardError as e:
-            return account_view(request, who, error=sentence(e.message), status=e.status)
+            return account_view(request, conn, who, error=sentence(e.message), status=e.status)
         if token is None:
-            return account_view(request, who, error=service.REAUTH_FAILED, status=401)
+            return account_view(request, conn, who, error=service.REAUTH_FAILED, status=401)
         return with_session(RedirectResponse("/account?done=password", status_code=303), token)
 
     @app.post("/account/authenticator")
@@ -528,17 +564,17 @@ def create_app(db_path, secure_cookies=True):
         try:
             throttle(conn, request, "reauth")
         except BoardError as e:
-            return account_view(request, who, error=sentence(e.message), status=e.status)
+            return account_view(request, conn, who, error=sentence(e.message), status=e.status)
         if not service.start_authenticator_change(conn, who, request.cookies.get(SESSION_COOKIE),
                                                   password, code, client_key(request)):
-            return account_view(request, who, error=service.REAUTH_FAILED, status=401)
+            return account_view(request, conn, who, error=service.REAUTH_FAILED, status=401)
         return RedirectResponse("/account/authenticator", status_code=303)
 
     def authenticator_view(request, conn, who, error=None, status=200):
         details = service.pending_authenticator(conn, who, request.cookies.get(SESSION_COOKIE))
         if details is None:
             # A confirm that finds nothing is a 410; just opening the page is not an error.
-            return account_view(request, who, status=200 if status == 200 else 410,
+            return account_view(request, conn, who, status=200 if status == 200 else 410,
                                 error="That authenticator change expired or was not "
                                       "started here. Start again below.")
         qr = segno.make(details["otpauth_url"], error="m").svg_inline(
@@ -567,6 +603,52 @@ def create_app(db_path, secure_cookies=True):
                                       status=e.status)
         return with_session(RedirectResponse("/account?done=authenticator", status_code=303),
                             token)
+
+    # Passkeys (decisions/0008). Adding one proves the password and a current code
+    # again, like the changes above; removing one needs only the session.
+
+    @app.post("/account/passkeys")
+    def account_passkey_start(request: Request, password: str = Form(...),
+                              code: str = Form(...), label: str = Form(""), conn=get_db):
+        who = page_admin(request, conn)
+        if who is None:
+            return to_login()
+        rp_id, _ = passkeys.relying_party(public_base(request))
+        try:
+            throttle(conn, request, "reauth")
+            options = passkeys.start_registration(
+                conn, who, request.cookies.get(SESSION_COOKIE), password, code, rp_id,
+                client_key(request))
+        except BoardError as e:
+            return account_view(request, conn, who, error=sentence(e.message), status=e.status)
+        if options is None:
+            return account_view(request, conn, who, error=service.REAUTH_FAILED, status=401)
+        label = " ".join(label.split())[:passkeys.MAX_LABEL_CHARS] or "Passkey"
+        return render(request, "account_passkey.html", who=who, options=options, label=label,
+                      error=None, minutes=passkeys.PASSKEY_SECONDS // 60)
+
+    @app.post("/account/passkeys/finish")
+    def account_passkey_finish(request: Request, credential: str = Form(""),
+                               label: str = Form(""), conn=get_db):
+        who = page_admin(request, conn)
+        if who is None:
+            return to_login()
+        rp_id, origin = passkeys.relying_party(public_base(request))
+        try:
+            passkeys.finish_registration(conn, who, request.cookies.get(SESSION_COOKIE),
+                                         credential, label, rp_id, origin)
+        except BoardError as e:
+            return account_view(request, conn, who, error=sentence(e.message), status=e.status)
+        return RedirectResponse("/account?done=passkey", status_code=303)
+
+    @app.post("/account/passkeys/remove")
+    def account_passkey_remove(request: Request, credential_id: str = Form(...),
+                               conn=get_db):
+        who = page_admin(request, conn)
+        if who is None:
+            return to_login()
+        passkeys.remove_passkey(conn, who, credential_id)
+        return RedirectResponse("/account?done=passkey-removed", status_code=303)
 
     @app.get("/")
     def index(request: Request, conn=get_db):

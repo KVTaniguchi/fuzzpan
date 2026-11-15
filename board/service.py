@@ -412,7 +412,7 @@ def finish_authenticator_change(conn, caller, session, code):
 
 
 def reset_admin(conn, admin):
-    """Host-side only. Clears the password, authenticator and sessions, tells
+    """Host-side only. Clears the password, authenticator, passkeys and sessions, tells
     every admin, and returns a new setup token."""
     if conn.execute("SELECT 1 FROM admins WHERE name = ?", (admin,)).fetchone() is None:
         raise BoardError(400, "unknown admin")
@@ -420,6 +420,9 @@ def reset_admin(conn, admin):
                  "setup_hash = NULL, setup_expires_at = NULL WHERE name = ?", (admin,))
     conn.execute("DELETE FROM sessions WHERE admin = ?", (admin,))
     conn.execute("DELETE FROM login_pairs WHERE username = ?", (admin,))
+    # Passkeys were added by whoever held the account before (decisions/0008).
+    conn.execute("DELETE FROM passkeys WHERE admin = ?", (admin,))
+    conn.execute("DELETE FROM passkey_challenges WHERE admin = ?", (admin,))
     # Links made before the reset are void: whoever now holds the account is not
     # who made them.
     conn.execute("UPDATE invites SET status = 'cancelled' WHERE owner = ? AND status = 'open'",
