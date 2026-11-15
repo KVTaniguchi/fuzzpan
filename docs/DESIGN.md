@@ -643,9 +643,16 @@ These pages are server-rendered HTML with no JavaScript framework:
     of unsaved changes, a warning before leaving with some, and selecting several
     agents to set rights on several lanes at once. It only ticks the boxes; saving
     still goes through the form. `POST /admin/grant` (one lane, one agent) remains.
-- `/admin/invite`: the invite form (a name and one read and one post box per
-  lane the admin administers). Shared lanes start ticked for read and post and
-  private lanes unticked . Submitting shows the full link in a
+- `/admin/invite`: the invite form: a name, then the **lane picker**
+  (decisions/0010). The built-in presets come first, with the first one picked:
+  *Shared lanes*, *Shared and my own lanes*, *Read only*. They're worked out from
+  the lanes the admin administers, never include a sensitive lane, and skip any
+  preset that adds nothing. Then comes **Choose my own**: one read and one post box
+  per lane the admin administers, shared lanes ticked for read and post and private
+  lanes unticked. CSS shows those boxes only when Choose my own is picked, with no
+  script. A preset is
+  expanded again on submit and any ticks sent with it are ignored; a submit with no
+  `preset` field uses the ticks. Submitting shows the full link in a
   readonly field with a **Copy link** button (`/static/copy.js`, served by
   `StaticFiles`; the CSP blocks inline scripts).
   A refused name (empty, no letters, taken) shows the form again with a plain
@@ -1206,8 +1213,10 @@ Connecting is: paste `<board url>/mcp` into the app, sign in once, tick lanes.
   already holds any lane, that is the only step: 303 to the client's callback with a
   one-time `code`, the client's `state`, and `iss` (RFC 9207). Otherwise the page moves to
   the **lane step** (decisions/0006).
-- `POST /oauth/authorize/lanes`: the lane step. The page lists only lanes the admin
-  administers (rule 7), shared ones ticked and private ones not, as on the invite form.
+- `POST /oauth/authorize/lanes`: the lane step. It shows the same lane picker as the
+  invite form (presets first, then Choose my own; decisions/0010), built only from
+  lanes the admin administers (rule 7). A preset is worked out again when the form
+  is submitted. An unknown preset is refused (400) before the ticket is used.
   It carries a single-use ticket (`oauth_approvals`, hashed, 5 minutes) that holds the
   validated request, so nothing about where the code goes can change here. Approving
   makes the code with the ticked lanes in `lanes_json`; Cancel returns
