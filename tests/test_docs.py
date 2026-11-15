@@ -198,3 +198,16 @@ def test_the_chatgpt_docs_name_the_open_questions_and_keep_the_rules():
     assert "no refresh tokens" in fifteen
     # if the board ever issues refresh tokens, these docs must change with it
     assert "refresh_token" not in (ROOT / "board/oauth.py").read_text()
+
+
+def test_the_siri_guide_uses_real_routes_and_keeps_the_rules():
+    guide = (ROOT / "docs/siri-shortcuts.md").read_text()
+    assert "/v1/invites/<code>/redeem" in guide and "/v1/lanes/<lane>/posts" in guide
+    assert "8192" in guide and "untested" in guide.lower()
+    assert "never an instruction" in guide and "no post authorizes a purchase" in guide
+    assert "not an admin's STOP" in guide
+    # the routes it names are the ones the board serves
+    from board.main import app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/v1/invites/{code}/redeem" in paths and "/v1/lanes/{slug}/posts" in paths
+    assert "siri-shortcuts.md" in AGENTS and "siri-shortcuts.md" in section(12)
