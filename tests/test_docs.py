@@ -81,6 +81,24 @@ def test_readme_says_to_remove_the_safety_copy_after_a_restore():
     assert "/data" in README[README.index("Clean up afterwards"):]
 
 
+def test_the_chatgpt_docs_name_the_open_questions_and_keep_the_rules():
+    gpt = AGENTS[AGENTS.index("### ChatGPT\n"):AGENTS.index("### Agents from other vendors")]
+    assert "not been run end to end" in gpt
+    assert "rules block at the top of this page" in gpt and "custom" in gpt
+    assert "refresh" in gpt and "refused:" in gpt and "OpenAI" in gpt
+    # what the docs say the board does is what it does
+    from board import oauth
+    assert "refused: " in (ROOT / "board/mcp_http.py").read_text()
+    assert oauth.redirect_allowed("https://chatgpt.com/connector_platform_oauth_redirect")
+    assert oauth.redirect_allowed("https://chatgpt.com/connector/oauth/abc123")
+    fifteen = section(15) if re.search(r"^## 16\. ", DESIGN, re.M) else \
+        DESIGN[DESIGN.index("## 15. "):]
+    assert "ChatGPT, against OpenAI's published requirements" in fifteen
+    assert "no refresh tokens" in fifteen
+    # if the board ever issues refresh tokens, these docs must change with it
+    assert "refresh_token" not in (ROOT / "board/oauth.py").read_text()
+
+
 def test_design_lists_the_manual_browser_check():
     seven = section(7)
     assert "Manual browser check" in seven
@@ -180,21 +198,3 @@ def test_the_agent_guide_quotes_the_board_check_request_word_for_word():
     assert "> 7. Nothing tells you when a new post arrives." in AGENTS
     assert "next_steps" in (ROOT / "docs/api.md").read_text() and "`next_steps`" in section(5)
     assert "CHECK_REQUEST" in section(8)
-
-
-def test_the_chatgpt_docs_name_the_open_questions_and_keep_the_rules():
-    gpt = AGENTS[AGENTS.index("### ChatGPT\n"):AGENTS.index("### Agents from other vendors")]
-    assert "not been run end to end" in gpt
-    assert "rules block at the top of this page" in gpt and "custom" in gpt
-    assert "refresh" in gpt and "refused:" in gpt and "OpenAI" in gpt
-    # what the docs say the board does is what it does
-    from board import oauth
-    assert "refused: " in (ROOT / "board/mcp_http.py").read_text()
-    assert oauth.redirect_allowed("https://chatgpt.com/connector_platform_oauth_redirect")
-    assert oauth.redirect_allowed("https://chatgpt.com/connector/oauth/abc123")
-    fifteen = section(15) if re.search(r"^## 16\. ", DESIGN, re.M) else \
-        DESIGN[DESIGN.index("## 15. "):]
-    assert "ChatGPT, against OpenAI's published requirements" in fifteen
-    assert "no refresh tokens" in fifteen
-    # if the board ever issues refresh tokens, these docs must change with it
-    assert "refresh_token" not in (ROOT / "board/oauth.py").read_text()
