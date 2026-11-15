@@ -1172,4 +1172,14 @@ Connecting is: paste `<board url>/mcp` into the app, sign in once, tick lanes.
   replaces only the invite token and leaves these alone.
 - Rights live on the agent, never the connection: a new agent gets the lanes ticked on
   the lane step, a returning one keeps what it has. Every lane change follows §6.
+- **ChatGPT, against OpenAI's published requirements (checked 2026-11-14, not yet run
+  end to end).** What matches: both callback shapes, PKCE S256, dynamic registration,
+  and `iss` on every redirect back, which should let ChatGPT use the fixed callback. Not
+  advertised, on purpose: client metadata documents (ChatGPT then falls back to
+  registration) and `scopes_supported` (so it asks for no OpenID scopes). Ignored:
+  `resource` and `scope`, since a token works only on this board and every request is
+  checked against lanes. Open: there are no refresh tokens and no `expires_in`, and if
+  ChatGPT tries to refresh anyway, the admin has to sign in again; and whether ChatGPT
+  shows the MCP `instructions` to its model. `docs/agents.md` tells the admin to paste
+  the rules into ChatGPT's own instructions and what to watch for.
 
