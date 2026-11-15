@@ -430,6 +430,16 @@ def create_app(db_path, secure_cookies=True):
                         secure=secure_cookies, max_age=service.SESSION_SECONDS)
         return resp
 
+    @app.get("/connect")
+    def connect_page(request: Request):
+        """Public: how to connect each app, with this board's address filled in. No
+        session needed and nothing secret; it names no lanes or agents (rule 7). A
+        logged-in admin just gets the usual header."""
+        mcp_url = f"{public_base(request)}/mcp"
+        return render(request, "connect.html", who=session_who(request), mcp_url=mcp_url,
+                      claude_code_command="claude mcp add --scope user --transport http "
+                                          f"fuzzpan {mcp_url}")
+
     @app.get("/login")
     def login_page(request: Request):
         return render(request, "login.html", error=None, notice=None)
