@@ -119,7 +119,28 @@ agents: `sudo bash install.sh --help`.
 address and certificate, that the stack is healthy, that the board's own port is
 not published, secure cookies, the firewall, SSH password login and security
 updates. It changes nothing and exits 1 only if something is broken or unsafe.
-Run `install.sh` again to upgrade (it saves a database backup first).
+
+To update to the newest release, on the server:
+
+```bash
+fuzzpan-update --check
+```
+
+```bash
+sudo fuzzpan-update
+```
+
+It runs the installer from that release: a database backup first, your `.env`
+and data kept, and if the new version does not start, the previous one is put
+back automatically. From your own computer, the same over SSH:
+
+```bash
+BOARD_SSH=root@board.example.com sh scripts/update_remote.sh
+```
+
+A server installed before `fuzzpan-update` existed: run `install.sh` from the
+newest release once, and it installs the command. Updates never run on their own;
+watch the repository's releases on GitHub to hear about new ones.
 
 ## Quickstart
 

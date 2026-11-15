@@ -50,6 +50,10 @@ def box(tmp_path):
          log + 'case "$*" in\n'
                '  "compose version") echo "Docker Compose version v2.30.0";;\n'
                '  *"ps -q board"*) [ -n "$FAKE_RUNNING" ] && echo abc123;;\n'
+               '  *"up -d --build --wait"*) [ -n "$FAKE_UP_FAILS" ] && exit 1;;\n'
+               '  *"up -d --wait"*) [ -n "$FAKE_ROLLBACK_FAILS" ] && exit 1;;\n'
+               '  *"exec -T board python -c"*) echo "${FAKE_SCHEMA_BEFORE:-7}";;\n'
+               '  *"run --rm --no-deps -T board python -c"*) echo "${FAKE_SCHEMA_AFTER:-7}";;\n'
                '  *"admin_cli provision"*) if [ -n "$FAKE_PROVISIONED" ]; then '
                'echo "x already has admins; refusing to provision it again." >&2; exit 1; fi; '
                f'echo "One-time setup links:"; echo "  alice: {LINK}";;\n'
@@ -58,7 +62,7 @@ def box(tmp_path):
     tarball = tmp_path / "src.tar.gz"
     with tarfile.open(tarball, "w:gz") as tar:
         for rel in ("docker-compose.yml", "Caddyfile", "Dockerfile", "pyproject.toml", "uv.lock",
-                    "board", "client", "scripts/doctor.py", ".env.example"):
+                    "board", "client", "scripts/doctor.py", "scripts/update.sh", ".env.example"):
             tar.add(ROOT / rel, arcname=f"fuzzpan-main/{rel}",
                     filter=lambda i: None if "__pycache__" in i.name else i)
 
@@ -253,3 +257,67 @@ def test_a_rerun_after_a_crash_between_start_and_provision_says_how_to_get_a_lin
 def test_help_prints_the_options(box):
     r = run(box, "--help")
     assert r.returncode == 0 and "--domain" in r.stdout and "--admin" in r.stdout
+
+
+def test_an_install_records_its_release_and_installs_fuzzpan_update(box):
+    r = run(box, *GOOD, "--ref", "v0.2.0")
+    assert r.returncode == 0, r.stderr
+    assert (box[1] / "opt/.fuzzpan-release").read_text() == "REPO=kvtaniguchi/fuzzpan\nREF=v0.2.0\n"
+    cmd = box[1] / "root/usr/local/bin/fuzzpan-update"
+    assert cmd.read_text() == (ROOT / "scripts/update.sh").read_text()
+    assert stat.S_IMODE(cmd.stat().st_mode) == 0o755
+
+
+def test_an_upgrade_says_which_release_it_came_from(box):
+    assert run(box, *GOOD, "--ref", "v0.1.0").returncode == 0
+    r = run(box, "--yes", "--ref", "v0.2.0", FAKE_RUNNING="1")
+    assert r.returncode == 0, r.stderr
+    assert "Updated from v0.1.0 to v0.2.0." in r.stdout
+    assert "REF=v0.2.0" in (box[1] / "opt/.fuzzpan-release").read_text()
+
+
+def _installed_then_failing_upgrade(box, **extra):
+    assert run(box, *GOOD, "--ref", "v0.1.0").returncode == 0
+    (box[1] / "opt/board/OLD_VERSION_MARKER").write_text("old")
+    (box[1] / "calls").write_text("")
+    return run(box, "--yes", "--ref", "v0.2.0", FAKE_RUNNING="1", FAKE_UP_FAILS="1", **extra)
+
+
+def test_a_failed_upgrade_puts_the_previous_files_back_and_keeps_an_unmigrated_database(box):
+    r = _installed_then_failing_upgrade(box)
+    assert r.returncode == 1
+    assert "previous version (v0.1.0) is running again" in r.stderr
+    opt = box[1] / "opt"
+    assert (opt / "board/OLD_VERSION_MARKER").exists()
+    assert "REF=v0.1.0" in (opt / ".fuzzpan-release").read_text()
+    assert (opt / ".env").exists()
+    c = calls(box)
+    assert not any("admin_cli restore" in line for line in c)
+    stop = next(i for i, line in enumerate(c) if "compose stop board" in line)
+    back_up = next(i for i, line in enumerate(c) if line.endswith("compose up -d --wait"))
+    assert stop < back_up
+    assert "keeping it as it is" in r.stdout
+
+
+def test_a_failed_upgrade_that_migrated_the_database_restores_the_backup(box):
+    r = _installed_then_failing_upgrade(box, FAKE_SCHEMA_BEFORE="7", FAKE_SCHEMA_AFTER="8")
+    assert r.returncode == 1 and "is running again" in r.stderr
+    c = calls(box)
+    backup = next(line for line in c if "admin_cli backup" in line).split()[-1]
+    assert f"docker compose run --rm --no-deps -T board python -m board.admin_cli restore {backup} --force" in c
+    restore = next(i for i, line in enumerate(c) if "admin_cli restore" in line)
+    back_up = next(i for i, line in enumerate(c) if line.endswith("compose up -d --wait"))
+    assert restore < back_up
+
+
+def test_a_failed_rollback_says_the_board_may_be_down_and_where_the_backup_is(box):
+    r = _installed_then_failing_upgrade(box, FAKE_ROLLBACK_FAILS="1")
+    assert r.returncode == 1
+    assert "putting the previous version back failed too" in r.stderr
+    assert "/data/pre-upgrade-" in r.stderr
+
+
+def test_a_failed_fresh_install_does_not_try_to_roll_back(box):
+    r = run(box, *GOOD, FAKE_UP_FAILS="1")
+    assert r.returncode == 1 and "did not come up healthy" in r.stderr
+    assert not any("compose stop" in line for line in calls(box))

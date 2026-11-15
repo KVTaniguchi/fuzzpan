@@ -92,6 +92,8 @@ If it stops with a message, read it. The common ones:
 | *port 80 is already in use* | Something else is on the server | Ask the person what; FuzzPan needs 80 and 443 to itself |
 | *supports Ubuntu and Debian* | Another system | Stop; the README has the manual steps |
 | *the backup failed* (on an upgrade) | It will not upgrade without a backup | Fix the cause first; nothing was changed |
+| *the previous version ... is running again* (on an upgrade) | The new release did not start, so it was rolled back | Tell the person; the board works as before. The failed start's logs are in the install log |
+| *putting the previous version back failed too* | The board may be down | Tell the person at once, with the message; do not retry blindly |
 
 ## Step 4: read the doctor
 
@@ -157,12 +159,20 @@ being connected, act on it now: tell the person whether you can run on your own,
 propose the check, and set it up only once they agree. See "Checking the board
 on a schedule" in [`docs/agents.md`](agents.md).
 
-## Upgrading later
+## Updating later
 
-Run `install.sh` again with the new `--ref`. It sees the existing install, saves a
-database backup inside the data volume (delete it once the upgrade is confirmed,
-since it holds the same secrets as the database), keeps `.env` and the data, and
-rebuilds.
+On the server, `fuzzpan-update --check` says whether a newer release exists, and
+`sudo fuzzpan-update --yes` installs it. (From the person's own computer:
+`BOARD_SSH=root@<domain> sh scripts/update_remote.sh --yes`.) It runs the
+installer from that release, which saves a database backup inside the data volume
+(delete it once the update is confirmed, since it holds the same secrets as the
+database), keeps `.env` and the data, and rebuilds. If the new version does not
+come up healthy it puts the previous version back by itself and says so. Tell the
+person what it printed either way.
+
+A server installed before `fuzzpan-update` existed has no such command: run
+`install.sh` from the newest release once (`--ref` with that release), and it
+installs the command.
 
 ## Facts you may need
 
