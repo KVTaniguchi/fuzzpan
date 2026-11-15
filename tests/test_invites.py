@@ -14,30 +14,21 @@ from board.app import create_app
 from board.provision import provision_family
 from client import cli
 from client.board_client import BoardClientError, InviteLinkError, redeem
-from tests.conftest import Board
+from tests.conftest import HTTPS, Board
 
 RW = {"read": True, "post": True}
 READ_ONLY = {"read": True, "post": False}
-HTTPS = "https://testserver"
 
 
 def redeem_code(board, code, http=None):
-    return (http or TestClient(board.app, base_url=HTTPS)).post(f"/v1/invites/{code}/redeem")
+    return (http or board.anon()).post(f"/v1/invites/{code}/redeem")
 
 
 def me(board, token):
-    r = TestClient(board.app, base_url=HTTPS).get(
+    r = board.anon().get(
         "/v1/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200, r.text
     return r.json()
-
-
-def db_rows(board, sql, args=()):
-    conn = sqlite3.connect(board.app.state.db_path)
-    try:
-        return conn.execute(sql, args).fetchall()
-    finally:
-        conn.close()
 
 
 def db_exec(board, sql, args=()):
@@ -70,7 +61,7 @@ def test_expired_invite_refused(board, frozen_time):
     frozen_time.advance(service.INVITE_SECONDS + 1)
     assert redeem_code(board, code).status_code == 410
     assert TestClient(board.app).get(f"/invite/{code}").status_code == 410
-    assert db_rows(board, "SELECT id FROM principals WHERE id = 'coder'") == []
+    assert board.q("SELECT id FROM principals WHERE id = 'coder'") == []
 
 
 def test_cancelled_invite_refused(board):
@@ -89,10 +80,10 @@ def test_unknown_code_is_404(board):
 
 def test_code_is_stored_hashed(board):
     code = board.invite("alice", "Coder", {})
-    assert db_rows(board, "SELECT code_hash FROM invites") == \
+    assert board.q("SELECT code_hash FROM invites") == \
         [(hashlib.sha256(code.encode()).hexdigest(),)]
-    dump = repr(db_rows(board, "SELECT * FROM invites")) + repr(
-        db_rows(board, "SELECT detail FROM audit_log"))
+    dump = repr(board.q("SELECT * FROM invites")) + repr(
+        board.q("SELECT detail FROM audit_log"))
     assert code not in dump
     assert code not in board.admin("alice").get("/v1/admin/invites").text
 
@@ -103,7 +94,7 @@ def test_redeemed_token_works_and_is_returned_only_once(board):
     token = first.json()["token"]
     assert first.json()["agent_id"] == "coder"
     assert me(board, token)["id"] == "coder"
-    assert db_rows(board, "SELECT token_hash FROM principals WHERE id = 'coder'") == \
+    assert board.q("SELECT token_hash FROM principals WHERE id = 'coder'") == \
         [(hashlib.sha256(token.encode()).hexdigest(),)]
     again = redeem_code(board, code)
     assert again.status_code == 410 and token not in again.text
@@ -137,7 +128,7 @@ def test_cannot_invite_onto_another_admins_private_lane(board):
     r = board.admin("alice").post("/v1/admin/invites", json={
         "display_name": "Spy", "lanes": {"bob-money": RW}})
     assert r.status_code == 404
-    assert db_rows(board, "SELECT id FROM invites") == []
+    assert board.q("SELECT id FROM invites") == []
 
 
 def test_unknown_lane_refused_at_creation(board):
@@ -150,7 +141,7 @@ def test_read_only_invite_cannot_post(board):
     token = redeem_code(board, board.invite("alice", "Reader", {"engineering": READ_ONLY})
                         ).json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     assert http.get("/v1/lanes/engineering/posts", headers=headers).status_code == 200
     assert http.post("/v1/lanes/engineering/posts", json={"body": "hi"},
                      headers=headers).status_code == 403
@@ -160,7 +151,7 @@ def test_invite_gives_no_rights_on_unlisted_lanes(board):
     token = redeem_code(board, board.invite("alice", "Coder", {"engineering": RW})).json()["token"]
     assert set(me(board, token)["lanes"]) == {"engineering"}
     headers = {"Authorization": f"Bearer {token}"}
-    assert TestClient(board.app, base_url=HTTPS).get(
+    assert board.anon().get(
         "/v1/lanes/alice-money/posts", headers=headers).status_code == 404
 
 
@@ -199,8 +190,8 @@ def test_name_taken_between_creation_and_redemption_leaves_nothing_behind(board)
         service.register_agent(conn, service.Caller("bob", "human", "bob"), "coder")
     r = redeem_code(board, code)
     assert r.status_code == 409
-    assert db_rows(board, "SELECT owner FROM principals WHERE id = 'coder'") == [("bob",)]
-    assert db_rows(board, "SELECT COUNT(*) FROM grants WHERE principal_id = 'coder'") == [(0,)]
+    assert board.q("SELECT owner FROM principals WHERE id = 'coder'") == [("bob",)]
+    assert board.q("SELECT COUNT(*) FROM grants WHERE principal_id = 'coder'") == [(0,)]
 
 
 # --- Reconnecting -----------------------------------------------------------
@@ -217,7 +208,7 @@ def test_reconnect_replaces_the_token_and_keeps_lanes(board):
     result = redeem_code(board, code).json()
     assert result["agent_id"] == "coder" and result["token"] != old
     assert me(board, result["token"])["lanes"] == {"engineering": RW}
-    r = TestClient(board.app, base_url=HTTPS).get("/v1/me",
+    r = board.anon().get("/v1/me",
                                                   headers={"Authorization": f"Bearer {old}"})
     assert r.status_code == 401
 
@@ -234,7 +225,7 @@ def test_agent_revoked_while_a_reconnect_invite_is_open_stays_revoked(board):
     code = reconnect_code(board, "alice", "coder")
     board.admin("alice").post("/v1/admin/principals/coder/revoke")
     assert redeem_code(board, code).status_code == 410
-    assert db_rows(board, "SELECT status, token_hash FROM principals WHERE id = 'coder'") == \
+    assert board.q("SELECT status, token_hash FROM principals WHERE id = 'coder'") == \
         [("revoked", None)]
 
 
@@ -259,9 +250,9 @@ def test_failed_grant_at_redemption_leaves_no_agent_and_the_invite_unclaimed(boa
     db_exec(board, "UPDATE lanes SET scope = 'bob' WHERE slug = 'household'")
     r = redeem_code(board, code)
     assert r.status_code in (403, 404)
-    assert db_rows(board, "SELECT id FROM principals WHERE id = 'coder'") == []
-    assert db_rows(board, "SELECT COUNT(*) FROM grants WHERE principal_id = 'coder'") == [(0,)]
-    assert db_rows(board, "SELECT status, redeemed_at FROM invites") == [("open", None)]
+    assert board.q("SELECT id FROM principals WHERE id = 'coder'") == []
+    assert board.q("SELECT COUNT(*) FROM grants WHERE principal_id = 'coder'") == [(0,)]
+    assert board.q("SELECT status, redeemed_at FROM invites") == [("open", None)]
 
 
 def test_removed_inviting_admin_cannot_have_their_invite_redeemed(board):
@@ -269,7 +260,7 @@ def test_removed_inviting_admin_cannot_have_their_invite_redeemed(board):
     db_exec(board, "DELETE FROM sessions WHERE admin = 'alice'")
     db_exec(board, "DELETE FROM admins WHERE name = 'alice'")
     assert redeem_code(board, code).status_code == 410
-    assert db_rows(board, "SELECT id FROM principals WHERE id = 'coder'") == []
+    assert board.q("SELECT id FROM principals WHERE id = 'coder'") == []
 
 
 def test_concurrent_redemptions_give_exactly_one_token(board):
@@ -294,13 +285,13 @@ def test_concurrent_redemptions_give_exactly_one_token(board):
         t.join()
     assert sorted(r[0] for r in results) == ["error"] * (racers - 1) + ["ok"]
     assert {r[1] for r in results if r[0] == "error"} == {410}
-    assert db_rows(board, "SELECT COUNT(*) FROM principals WHERE id = 'coder'") == [(1,)]
-    assert db_rows(board, "SELECT COUNT(*) FROM audit_log WHERE action = 'invite-redeem'") == [(1,)]
-    assert db_rows(board, "SELECT status FROM invites") == [("redeemed",)]
+    assert board.q("SELECT COUNT(*) FROM principals WHERE id = 'coder'") == [(1,)]
+    assert board.q("SELECT COUNT(*) FROM audit_log WHERE action = 'invite-redeem'") == [(1,)]
+    assert board.q("SELECT status FROM invites") == [("redeemed",)]
 
 
 def test_redemption_is_rate_limited(board):
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     statuses = [redeem_code(board, "inv_guess", http).status_code for _ in range(12)]
     assert statuses[:10] == [404] * 10 and statuses[10:] == [429, 429]
 
@@ -592,7 +583,7 @@ def test_lane_rights_must_be_real_booleans(board, rights):
     r = board.admin("alice").post("/v1/admin/invites", json={
         "display_name": "Coder", "lanes": {"engineering": rights}})
     assert r.status_code == 400
-    assert db_rows(board, "SELECT id FROM invites") == []
+    assert board.q("SELECT id FROM invites") == []
 
 
 def test_the_board_command_is_installed_as_an_entry_point():

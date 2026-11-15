@@ -12,18 +12,13 @@ import shlex
 import stat
 import subprocess
 import tarfile
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
+from tests.conftest import ROOT, stub
+
 SCRIPT = ROOT / "scripts" / "install.sh"
 LINK = "https://board.example.com/setup/SECRETSETUPTOKEN"
-
-
-def stub(path, body):
-    path.write_text("#!/bin/sh\n" + body)
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
 @pytest.fixture

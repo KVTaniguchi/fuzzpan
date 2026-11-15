@@ -12,14 +12,9 @@ from pathlib import Path
 import pytest
 
 from board.provision import provision_family
+from tests.conftest import ROOT, stub
 
-ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "backup_pull.sh"
-
-
-def stub(path, body):
-    path.write_text("#!/bin/sh\n" + body)
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
 @pytest.fixture

@@ -3,31 +3,20 @@ page that asks which lanes their first agent should use, then hands back one lin
 
 import json
 import re
-import sqlite3
 
 import pyotp
-from fastapi.testclient import TestClient
 
 from board import service
-from tests.conftest import HTTPS
 
 
 def finish(board, name):
     """Finish setup the way a browser does. Returns (client holding any cookie, response)."""
-    http = TestClient(board.app, base_url=HTTPS)
-    code = pyotp.TOTP(board.totp_secret(name)).at(int(board.clock.time()))
-    r = http.post(f"/setup/{board.tokens[name]}", follow_redirects=False,
-                  data={"password": board.passwords[name], "code": code})
-    return http, r
+    http = board.anon()
+    return http, board.finish_setup(name, http=http)
 
 
 def invite_rows(board):
-    conn = sqlite3.connect(board.app.state.db_path)
-    try:
-        return conn.execute("SELECT agent_id, display_name, owner, lanes_json, status "
-                            "FROM invites").fetchall()
-    finally:
-        conn.close()
+    return board.q("SELECT agent_id, display_name, owner, lanes_json, status FROM invites")
 
 
 def test_finishing_setup_logs_you_in_and_lands_on_the_welcome_page(board):
@@ -48,7 +37,7 @@ def test_finishing_setup_marks_the_admin_onboarded(board):
 
 
 def test_a_failed_setup_sets_no_cookie_and_logs_nobody_in(board):
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     r = http.post(f"/setup/{board.tokens['bob']}", follow_redirects=False,
                   data={"password": "short", "code": "1"})
     assert r.status_code == 400 and "set-cookie" not in r.headers
@@ -56,7 +45,7 @@ def test_a_failed_setup_sets_no_cookie_and_logs_nobody_in(board):
 
 
 def test_setup_page_names_the_username_and_asks_for_the_password_twice(board):
-    page = TestClient(board.app, base_url=HTTPS).get(f"/setup/{board.tokens['bob']}").text
+    page = board.anon().get(f"/setup/{board.tokens['bob']}").text
     # So a password manager saves the new password under the right username.
     assert re.search(r'<input name="username" value="bob" autocomplete="username" readonly>',
                      page)
@@ -64,7 +53,7 @@ def test_setup_page_names_the_username_and_asks_for_the_password_twice(board):
 
 
 def test_mismatched_passwords_save_nothing_and_the_link_still_works(board):
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     code = pyotp.TOTP(board.totp_secret("bob")).at(int(board.clock.time()))
     r = http.post(f"/setup/{board.tokens['bob']}", follow_redirects=False,
                   data={"password": board.passwords["bob"], "code": code,
@@ -85,7 +74,7 @@ def test_a_second_tap_on_finish_setup_sets_no_cookie(board):
 
 
 def test_the_welcome_page_needs_a_login(board):
-    http = TestClient(board.app, base_url=HTTPS)
+    http = board.anon()
     r = http.get("/welcome", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/login"
     r = http.post("/welcome", data={"display_name": "x"}, follow_redirects=False)

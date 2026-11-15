@@ -1,33 +1,20 @@
 import sqlite3
 
 import pytest
-from fastapi.testclient import TestClient
 
 from board import admin_cli, service
 from board.app import create_app
 from board.lanes import BASE_NOTICE, default_lanes
 from board.provision import FamilyExists, provision_family
-from tests.conftest import Board
-
-
-def rows(db, sql):
-    conn = sqlite3.connect(db)
-    try:
-        return conn.execute(sql).fetchall()
-    finally:
-        conn.close()
-
-
-def slugs(db):
-    return {r[0] for r in rows(db, "SELECT slug FROM lanes")}
+from tests.conftest import Board, q, slugs
 
 
 def scope(db, slug):
-    return rows(db, f"SELECT scope FROM lanes WHERE slug = '{slug}'")[0][0]
+    return q(db, f"SELECT scope FROM lanes WHERE slug = '{slug}'")[0][0]
 
 
 def admins(db):
-    return [r[0] for r in rows(db, "SELECT name FROM admins ORDER BY name")]
+    return [r[0] for r in q(db, "SELECT name FROM admins ORDER BY name")]
 
 
 def test_two_admins_get_the_seven_default_lanes(tmp_path):
@@ -36,15 +23,15 @@ def test_two_admins_get_the_seven_default_lanes(tmp_path):
                          "household-money", "engineering", "health"}
     assert scope(db, "bob-money") == "bob" and scope(db, "household") == "shared"
     assert scope(db, "health") == "alice"
-    assert rows(db, "SELECT name FROM lanes WHERE slug = 'bob-money'") == [("Bob money",)]
+    assert q(db, "SELECT name FROM lanes WHERE slug = 'bob-money'") == [("Bob money",)]
 
 
 def test_every_lane_carries_the_no_purchase_notice(tmp_path):
     provision_family(db := tmp_path / "b.db", [("alice", "Alice"), ("bob", "Bob")])
-    notices = [r[0] for r in rows(db, "SELECT notice FROM lanes")]
+    notices = [r[0] for r in q(db, "SELECT notice FROM lanes")]
     assert len(notices) == 7 and all(n.startswith(BASE_NOTICE) for n in notices)
     assert "Planning agents propose; humans decide." in \
-        rows(db, "SELECT notice FROM lanes WHERE slug = 'trips'")[0][0]
+        q(db, "SELECT notice FROM lanes WHERE slug = 'trips'")[0][0]
 
 
 def test_one_admin_gets_six_lanes(tmp_path):
@@ -59,9 +46,9 @@ def test_custom_lanes_replace_the_template(tmp_path):
     provision_family(db := tmp_path / "b.db", [("alice", "Alice"), ("bob", "Bob")], lanes)
     assert slugs(db) == {"garden", "bob-notes"}
     # The no-purchase notice is kept even when the file leaves it out.
-    assert rows(db, "SELECT notice FROM lanes WHERE slug = 'bob-notes'") == \
+    assert q(db, "SELECT notice FROM lanes WHERE slug = 'bob-notes'") == \
         [(f"{BASE_NOTICE} Mine.",)]
-    assert rows(db, "SELECT notice FROM lanes WHERE slug = 'garden'") == [(BASE_NOTICE,)]
+    assert q(db, "SELECT notice FROM lanes WHERE slug = 'garden'") == [(BASE_NOTICE,)]
 
 
 def test_custom_lane_scope_must_be_an_admin_or_shared(tmp_path):
@@ -94,7 +81,7 @@ def test_a_failed_provision_leaves_nothing_behind(tmp_path, monkeypatch):
     with pytest.raises(sqlite3.IntegrityError):
         provision_family(db, [("alice", "Alice")], [dup, dup])
     assert admins(db) == [] and slugs(db) == set()
-    assert rows(db, "SELECT COUNT(*) FROM principals") == [(0,)]
+    assert q(db, "SELECT COUNT(*) FROM principals") == [(0,)]
     monkeypatch.undo()
     provision_family(db, [("alice", "Alice")])  # not blocked by the failed attempt
 
@@ -111,60 +98,44 @@ def _app(tmp_path, names, clock):
     return db, Board(create_app(db), tokens, clock)
 
 
-def _login(board, name):
-    return board.admin(name)
-
-
-def _register(http, name):
-    code = http.post("/v1/admin/invites", json={"display_name": name, "lanes": {}}).json()["code"]
-    redeemed = TestClient(http.app, base_url="https://testserver").post(
-        f"/v1/invites/{code}/redeem")
-    assert redeemed.status_code == 200, redeemed.text
-
-
-def _grant(http, lane, who):
-    return http.put(f"/v1/admin/lanes/{lane}/grants/{who}",
-                    json={"can_read": True, "can_post": True}).json()
-
-
 def test_single_admin_shared_change_applies_directly(tmp_path, frozen_time):
     db, board = _app(tmp_path, ["alice"], frozen_time)
-    alice = _login(board, "alice")
-    _register(alice, "bot")
-    assert _grant(alice, "household", "bot") == {"status": "applied"}
-    assert rows(db, "SELECT COUNT(*) FROM pending") == [(0,)]
-    assert rows(db, "SELECT can_read, can_post FROM grants") == [(1, 1)]
+    alice = board.admin("alice")
+    board.register("alice", "bot")
+    assert board.grant("alice", "household", "bot").json() == {"status": "applied"}
+    assert q(db, "SELECT COUNT(*) FROM pending") == [(0,)]
+    assert q(db, "SELECT can_read, can_post FROM grants") == [(1, 1)]
 
 
 def test_three_admins_any_other_admin_can_approve(tmp_path, frozen_time):
     db, board = _app(tmp_path, ["alice", "bob", "carol"], frozen_time)
-    alice, carol = _login(board, "alice"), _login(board, "carol")  # carol onboarded; bob never logs in
-    _register(alice, "bot")
-    result = _grant(alice, "household", "bot")
+    alice, carol = board.admin("alice"), board.admin("carol")  # carol onboarded; bob never logs in
+    board.register("alice", "bot")
+    result = board.grant("alice", "household", "bot").json()
     assert result["status"] == "pending"
-    assert rows(db, "SELECT COUNT(*) FROM grants") == [(0,)]
+    assert q(db, "SELECT COUNT(*) FROM grants") == [(0,)]
     # The requester cannot approve their own change.
     assert alice.post(f"/v1/admin/pending/{result['pending_id']}/approve").status_code == 403
     assert carol.post(f"/v1/admin/pending/{result['pending_id']}/approve").status_code == 200
-    assert rows(db, "SELECT can_read, can_post FROM grants") == [(1, 1)]
+    assert q(db, "SELECT can_read, can_post FROM grants") == [(1, 1)]
 
 
 def test_provisional_until_any_other_admin_has_logged_in(tmp_path, frozen_time):
     db, board = _app(tmp_path, ["alice", "bob", "carol"], frozen_time)
-    alice = _login(board, "alice")
-    _register(alice, "bot")
-    first = _grant(alice, "household", "bot")
+    alice = board.admin("alice")
+    board.register("alice", "bot")
+    first = board.grant("alice", "household", "bot").json()
     assert first["status"] == "provisional"
-    assert rows(db, "SELECT can_read FROM grants") == [(1,)]  # takes effect at once
-    _login(board, "bob")  # one other admin is enough to end the bootstrap
-    _register(alice, "bot2")
-    assert _grant(alice, "household", "bot2")["status"] == "pending"
+    assert q(db, "SELECT can_read FROM grants") == [(1,)]  # takes effect at once
+    board.admin("bob")  # one other admin is enough to end the bootstrap
+    board.register("alice", "bot2")
+    assert board.grant("alice", "household", "bot2").json()["status"] == "pending"
 
 
 def test_three_admins_private_lanes_stay_isolated(tmp_path, frozen_time):
     db, board = _app(tmp_path, ["alice", "bob", "carol"], frozen_time)
-    alice, bob, carol = (_login(board, n) for n in ("alice", "bob", "carol"))
-    _register(alice, "bot")
+    alice, bob, carol = (board.admin(n) for n in ("alice", "bob", "carol"))
+    board.register("alice", "bot")
     for lane in ("alice-money", "bob-money"):
         assert carol.get(f"/v1/lanes/{lane}/posts").status_code == 404
         assert carol.put(f"/v1/admin/lanes/{lane}/grants/bot",
@@ -174,32 +145,32 @@ def test_three_admins_private_lanes_stay_isolated(tmp_path, frozen_time):
     assert "carol-money" in listed
     assert bob.put("/v1/admin/lanes/alice-money/grants/bot",
                    json={"can_read": True, "can_post": True}).status_code == 404
-    assert rows(db, "SELECT COUNT(*) FROM grants") == [(0,)]
+    assert q(db, "SELECT COUNT(*) FROM grants") == [(0,)]
 
 
 def test_three_admins_another_admin_can_reject_a_pending_change(tmp_path, frozen_time):
     db, board = _app(tmp_path, ["alice", "bob", "carol"], frozen_time)
-    alice, bob = _login(board, "alice"), _login(board, "bob")
-    _register(alice, "bot")
-    pid = _grant(alice, "household", "bot")["pending_id"]
+    alice, bob = board.admin("alice"), board.admin("bob")
+    board.register("alice", "bot")
+    pid = board.grant("alice", "household", "bot").json()["pending_id"]
     assert bob.post(f"/v1/admin/pending/{pid}/reject").status_code == 200
-    assert rows(db, "SELECT COUNT(*) FROM grants") == [(0,)]
-    assert rows(db, "SELECT status FROM pending") == [("rejected",)]
+    assert q(db, "SELECT COUNT(*) FROM grants") == [(0,)]
+    assert q(db, "SELECT status FROM pending") == [("rejected",)]
 
 
 def test_three_admins_non_requester_resolves_a_provisional_change(tmp_path, frozen_time):
     db, board = _app(tmp_path, ["alice", "bob", "carol"], frozen_time)
-    alice = _login(board, "alice")
-    _register(alice, "bot")
-    _register(alice, "bot2")
-    p1 = _grant(alice, "household", "bot")
-    p2 = _grant(alice, "household", "bot2")
+    alice = board.admin("alice")
+    board.register("alice", "bot")
+    board.register("alice", "bot2")
+    p1 = board.grant("alice", "household", "bot").json()
+    p2 = board.grant("alice", "household", "bot2").json()
     assert p1["status"] == p2["status"] == "provisional"
-    carol = _login(board, "carol")
+    carol = board.admin("carol")
     assert carol.post(f"/v1/admin/pending/{p1['pending_id']}/approve").status_code == 200
     assert carol.post(f"/v1/admin/pending/{p2['pending_id']}/reject").status_code == 200
-    assert rows(db, "SELECT principal_id FROM grants") == [("bot",)]  # rejection undid bot2
-    assert [r[0] for r in rows(db, "SELECT status FROM pending ORDER BY id")] == \
+    assert q(db, "SELECT principal_id FROM grants") == [("bot",)]  # rejection undid bot2
+    assert [r[0] for r in q(db, "SELECT status FROM pending ORDER BY id")] == \
         ["ratified", "rejected"]
 
 
@@ -244,7 +215,7 @@ def test_cli_requires_board_db(monkeypatch):
 def test_provision_returns_one_setup_token_per_admin(tmp_path):
     tokens = provision_family(db := tmp_path / "b.db", [("alice", "Alice"), ("bob", "Bob")])
     assert set(tokens) == {"alice", "bob"} and tokens["alice"] != tokens["bob"]
-    assert rows(db, "SELECT COUNT(*) FROM admins WHERE setup_hash IS NOT NULL") == [(2,)]
+    assert q(db, "SELECT COUNT(*) FROM admins WHERE setup_hash IS NOT NULL") == [(2,)]
 
 
 def test_cli_prints_a_setup_url_per_admin(tmp_path, monkeypatch, capsys):
@@ -264,6 +235,6 @@ def test_cli_reset_admin_prints_a_new_link(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     admin_cli.main(["reset-admin", "alice"])
     assert "https://board.example.test/setup/" in capsys.readouterr().out
-    assert rows(db, "SELECT action FROM audit_log") == [("admin-reset",)]
+    assert q(db, "SELECT action FROM audit_log") == [("admin-reset",)]
     with pytest.raises(SystemExit):
         admin_cli.main(["reset-admin", "nobody"])

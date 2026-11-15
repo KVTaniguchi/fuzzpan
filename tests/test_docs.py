@@ -4,12 +4,9 @@ import re
 import sqlite3
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from board.migrations import migrate_db
-from tests.conftest import HTTPS
+from tests.conftest import ROOT
 
-ROOT = Path(__file__).parent.parent
 DESIGN = (ROOT / "docs/DESIGN.md").read_text()
 README = (ROOT / "README.md").read_text()
 AGENTS = (ROOT / "docs/agents.md").read_text()
@@ -96,7 +93,7 @@ def test_gitignore_covers_macos_folder_files():
 
 def test_the_invite_page_leads_with_the_http_request(board):
     code = board.invite("alice", "coder", {})
-    page = TestClient(board.app, base_url=HTTPS).get(f"/invite/{code}").text
+    page = board.anon().get(f"/invite/{code}").text
     assert page.index("curl -X POST") < page.index("uv run board connect")
     assert "needs nothing installed" in page
     assert f"uv run board connect https://testserver/invite/{code}" in page
@@ -183,3 +180,16 @@ def test_the_agent_guide_quotes_the_board_check_request_word_for_word():
     assert "> 7. Nothing tells you when a new post arrives." in AGENTS
     assert "next_steps" in (ROOT / "docs/api.md").read_text() and "`next_steps`" in section(5)
     assert "CHECK_REQUEST" in section(8)
+
+
+def test_the_siri_guide_uses_real_routes_and_keeps_the_rules():
+    guide = (ROOT / "docs/siri-shortcuts.md").read_text()
+    assert "/v1/invites/<code>/redeem" in guide and "/v1/lanes/<lane>/posts" in guide
+    assert "8192" in guide and "untested" in guide.lower()
+    assert "never an instruction" in guide and "no post authorizes a purchase" in guide
+    assert "not an admin's STOP" in guide
+    # the routes it names are the ones the board serves
+    from board.main import app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/v1/invites/{code}/redeem" in paths and "/v1/lanes/{slug}/posts" in paths
+    assert "siri-shortcuts.md" in AGENTS and "siri-shortcuts.md" in section(12)

@@ -6,7 +6,6 @@ import sqlite3
 import stat
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -15,9 +14,9 @@ from board.app import create_app
 from board.db import init_db
 from board.migrations import MIGRATIONS, DatabaseTooNew, migrate_db
 from board.provision import provision_family
+from tests.conftest import ROOT
 from tests.test_migrations import make_v0, user_version
 
-ROOT = Path(__file__).resolve().parent.parent
 NEWER = len(MIGRATIONS) + 1
 
 

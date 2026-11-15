@@ -27,14 +27,6 @@ def wrong_code(board, name="alice"):
     return next(c for c in ("000000", "111111", "222222") if c not in valid)
 
 
-def finish_setup(board, name="alice", password=None, code=None):
-    password = board.passwords[name] if password is None else password
-    code = pyotp.TOTP(board.totp_secret(name)).at(int(board.clock.time())) if code is None else code
-    return TestClient(board.app).post(f"/setup/{board.tokens[name]}",
-                                      data={"password": password, "code": code},
-                                      follow_redirects=False)
-
-
 # --- Setup links -----------------------------------------------------------
 
 def test_setup_page_works_without_a_camera(board):
@@ -50,35 +42,35 @@ def test_viewing_the_setup_page_does_not_use_it_up(board):
     second = board.setup_page("alice")
     assert first.status_code == second.status_code == 200
     assert board.totp_secret("alice") in second.text
-    assert finish_setup(board).status_code == 303
+    assert board.finish_setup().status_code == 303
 
 
 def test_setup_link_is_single_use(board):
-    assert finish_setup(board).status_code == 303
-    assert finish_setup(board).status_code == 410
+    assert board.finish_setup().status_code == 303
+    assert board.finish_setup().status_code == 410
     assert board.setup_page("alice").status_code == 410
 
 
 def test_expired_setup_link_refused(board, frozen_time):
     frozen_time.advance(24 * 3600 + 1)
     assert board.setup_page("alice").status_code == 410
-    assert finish_setup(board).status_code == 410
+    assert board.finish_setup().status_code == 410
     assert admin_row(board)["pass_hash"] is None
 
 
 def test_short_password_refused(board):
-    r = finish_setup(board, password="x" * (MIN_PASSWORD_CHARS - 1))
+    r = board.finish_setup(password="x" * (MIN_PASSWORD_CHARS - 1))
     assert r.status_code == 400
     assert admin_row(board)["pass_hash"] is None
-    assert finish_setup(board, password="x" * MIN_PASSWORD_CHARS).status_code == 303  # link still live
+    assert board.finish_setup(password="x" * MIN_PASSWORD_CHARS).status_code == 303  # link still live
 
 
 def test_wrong_code_during_setup_saves_nothing(board):
-    r = finish_setup(board, code=wrong_code(board))
+    r = board.finish_setup(code=wrong_code(board))
     assert r.status_code == 400
     row = admin_row(board)
     assert row["pass_hash"] is None and row["setup_hash"] and row["totp_last_step"] == 0
-    assert finish_setup(board).status_code == 303  # same link, right code
+    assert board.finish_setup().status_code == 303  # same link, right code
 
 
 def test_setup_token_is_stored_hashed(board):
@@ -184,13 +176,6 @@ def test_a_good_login_resets_the_failure_count(board):
     assert board.login("alice", board.code("alice")).status_code == 303
 
 
-HTTPS = "https://testserver"
-
-
-def from_address(board, ip):
-    return TestClient(board.app, base_url=HTTPS, client=(ip, 50000))
-
-
 def pair(board, client="testclient", name="alice"):
     with service.connect(board.app.state.db_path) as c:
         row = c.execute("SELECT * FROM login_pairs WHERE username = ? AND client = ?",
@@ -214,8 +199,8 @@ def fail_many(board, monkeypatch, n, name="alice", start=0):
 
 
 def test_an_attacker_elsewhere_cannot_lock_the_admin_out(board):
-    attacker = from_address(board, "203.0.113.66")
-    admin = from_address(board, "198.51.100.5")
+    attacker = board.anon("203.0.113.66")
+    admin = board.anon("198.51.100.5")
     for _ in range(LOCK_AFTER):
         assert board.login("alice", "000000", password="wrong", http=attacker).status_code == 401
     assert pair(board, "203.0.113.66")["locked_until"] is not None
@@ -232,7 +217,7 @@ def test_guesses_from_many_addresses_never_lock_the_username(board, monkeypatch)
     assert count(board, "login_pairs") == 150
     with service.connect(board.app.state.db_path) as c:
         assert c.execute("SELECT count(*) FROM login_pairs WHERE locked_until IS NOT NULL").fetchone()[0] == 0
-    fresh = from_address(board, "192.0.2.77")
+    fresh = board.anon("192.0.2.77")
     assert board.login("alice", board.code("alice"), http=fresh).status_code == 303
 
 
@@ -245,14 +230,14 @@ def test_there_is_no_username_wide_lock_left_in_the_schema(board):
 
 
 def test_the_lock_on_an_address_is_per_username(board):
-    http = from_address(board, "203.0.113.66")
+    http = board.anon("203.0.113.66")
     for _ in range(LOCK_AFTER):
         board.login("alice", "000000", password="wrong", http=http)
     assert board.login("bob", board.code("bob"), http=http).status_code == 303
 
 
 def test_a_locked_address_gets_the_same_answer_as_a_wrong_password(board):
-    http = from_address(board, "203.0.113.66")
+    http = board.anon("203.0.113.66")
     for _ in range(LOCK_AFTER):
         wrong = board.login("alice", "000000", password="wrong", http=http)
     locked = board.login("alice", board.code("alice"), http=http)
@@ -260,7 +245,7 @@ def test_a_locked_address_gets_the_same_answer_as_a_wrong_password(board):
 
 
 def test_attempts_from_a_locked_address_are_not_counted(board):
-    http = from_address(board, "203.0.113.66")
+    http = board.anon("203.0.113.66")
     for _ in range(LOCK_AFTER):
         board.login("alice", "000000", password="wrong", http=http)
     locked = pair(board, "203.0.113.66")
@@ -297,7 +282,7 @@ def test_reset_leaves_another_admins_failures_alone(board, monkeypatch):
 
 
 def test_old_pairs_get_pruned_but_a_live_lock_does_not(board):
-    locked_ip, idle_ip = from_address(board, "203.0.113.1"), from_address(board, "203.0.113.2")
+    locked_ip, idle_ip = board.anon("203.0.113.1"), board.anon("203.0.113.2")
     board.login("alice", "000000", password="wrong", http=idle_ip)
     assert pair(board, "203.0.113.2")
     board.clock.advance(PAIR_FORGET_SECONDS + 1)
@@ -314,14 +299,14 @@ def test_old_pairs_get_pruned_but_a_live_lock_does_not(board):
 
 
 def test_unknown_usernames_leave_nothing_behind(board):
-    http = from_address(board, "203.0.113.66")
+    http = board.anon("203.0.113.66")
     for i in range(3):
         http.post("/login", data={"username": f"nobody-{i}", "password": "x", "code": "1"})
     assert count(board, "login_pairs") == 0
 
 
 def test_a_good_login_forgives_its_address(board):
-    http = from_address(board, "203.0.113.66")
+    http = board.anon("203.0.113.66")
     board.login("alice", "000000", password="wrong", http=http)
     assert board.login("alice", board.code("alice"), http=http).status_code == 303
     assert pair(board, "203.0.113.66") is None
@@ -330,9 +315,9 @@ def test_a_good_login_forgives_its_address(board):
 def test_all_addresses_in_one_ipv6_64_share_a_lock(board):
     for i in range(LOCK_AFTER):
         board.login("alice", "000000", password="wrong",
-                    http=from_address(board, f"2001:db8:1:2::{i + 1}"))
-    same_64 = from_address(board, "2001:db8:1:2:ffff::9")
-    other_64 = from_address(board, "2001:db8:1:3::1")
+                    http=board.anon(f"2001:db8:1:2::{i + 1}"))
+    same_64 = board.anon("2001:db8:1:2:ffff::9")
+    other_64 = board.anon("2001:db8:1:3::1")
     assert board.login("alice", board.code("alice"), http=same_64).status_code == 401
     assert board.login("alice", board.code("alice"), http=other_64).status_code == 303
 
@@ -463,7 +448,7 @@ def test_a_reset_during_login_cannot_be_outrun(board, monkeypatch):
 
 
 def test_non_ascii_code_is_an_ordinary_failure(board):
-    assert finish_setup(board, code="\u0663\u0664\u0665\u0666\u0667\u0668").status_code == 400
+    assert board.finish_setup(code="\u0663\u0664\u0665\u0666\u0667\u0668").status_code == 400
     r = board.login("alice", "12\u00e9456")  # enrolls, then fails like any wrong code
     assert r.status_code == 401
     assert pair(board)["failures"] == 1
@@ -471,14 +456,14 @@ def test_non_ascii_code_is_an_ordinary_failure(board):
 
 def test_setup_page_is_not_cached(board):
     assert board.setup_page("alice").headers["cache-control"] == "no-store"
-    finish_setup(board)
+    board.finish_setup()
     assert board.setup_page("alice").headers["cache-control"] == "no-store"  # the 410 page too
 
 
 def test_after_setup_the_old_link_says_to_wait_for_a_new_code(board):
     # Setup logs you in, but a code is used up: someone who comes back to the link
     # to log in again is told to wait for the next one.
-    r = finish_setup(board)
+    r = board.finish_setup()
     assert r.status_code == 303 and r.headers["location"] == "/welcome"
     page = TestClient(board.app).get(f"/setup/{board.tokens['alice']}").text
     assert "already" in page and "wait for the next" in page and 'href="/login"' in page

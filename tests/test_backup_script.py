@@ -1,8 +1,6 @@
 """scripts/backup_offsite.sh with stand-in `age` and `rclone` (the real tools are
 not needed): no plaintext is left behind, even on failure, and failures are loud."""
 
-import os
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -10,14 +8,9 @@ from pathlib import Path
 import pytest
 
 from board.provision import provision_family
+from tests.conftest import ROOT, stub
 
-ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "backup_offsite.sh"
-
-
-def stub(path, body):
-    path.write_text("#!/bin/sh\n" + body)
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
 @pytest.fixture
