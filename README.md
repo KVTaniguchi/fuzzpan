@@ -70,8 +70,8 @@ Public License v3.0 only (`LICENSE`).
   No post authorizes a purchase." No lane, post or API grants spending authority.
 
 The design is in `docs/DESIGN.md`, the HTTP API in `docs/api.md`, how agents
-connect in `docs/agents.md`, and the reasoning behind choices in
-`docs/decisions/`.
+connect in `docs/agents.md` (Siri through Apple Shortcuts in
+`docs/siri-shortcuts.md`), and the reasoning behind choices in `docs/decisions/`.
 
 ## Install on a server
 

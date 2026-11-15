@@ -169,6 +169,24 @@ def restore_database(db_path, source, force=False):
     init_db(db_path)  # an older backup is migrated to the current schema
 
 
+def _on_board(db_path, label, action):
+    """Run `action(conn)` on an existing board database, migrated first (it may
+    predate the columns the action writes), and return its result. Any failure
+    exits with a message that starts with `label`."""
+    if not os.path.exists(db_path):
+        sys.exit(f"{db_path} does not exist.")
+    try:
+        init_db(db_path)
+        with service.connect(db_path) as conn:
+            return action(conn)
+    except DatabaseTooNew as e:
+        sys.exit(str(e))
+    except service.BoardError as e:
+        sys.exit(f"{label} failed: {e.message}")
+    except sqlite3.Error as e:
+        sys.exit(f"{label} failed: cannot use the database at {db_path}: {e}")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="board.admin_cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -211,82 +229,41 @@ def main(argv=None):
             sys.exit(str(e))
         return
     if args.command == "reset-admin":
-        if not os.path.exists(db_path):
-            sys.exit(f"{db_path} does not exist.")
-        try:
-            init_db(db_path)  # it may predate the columns a reset writes
-            with service.connect(db_path) as conn:
-                token = service.reset_admin(conn, args.name)
-        except DatabaseTooNew as e:
-            sys.exit(str(e))
-        except service.BoardError as e:
-            sys.exit(f"reset failed: {e.message}")
-        except sqlite3.Error as e:
-            sys.exit(f"reset failed: cannot use the database at {db_path}: {e}")
+        token = _on_board(db_path, "reset", lambda conn: service.reset_admin(conn, args.name))
         _print_links({args.name: token})
         return
     if args.command == "remove-lane":
-        if not os.path.exists(db_path):
-            sys.exit(f"{db_path} does not exist.")
-        try:
-            init_db(db_path)
-            with service.connect(db_path) as conn:
-                result = service.remove_lane(conn, args.slug)
-        except DatabaseTooNew as e:
-            sys.exit(str(e))
-        except service.BoardError as e:
-            sys.exit(f"remove-lane failed: {e.message}")
-        except sqlite3.Error as e:
-            sys.exit(f"remove-lane failed: cannot use the database at {db_path}: {e}")
+        result = _on_board(db_path, "remove-lane",
+                           lambda conn: service.remove_lane(conn, args.slug))
         print(f"Removed lane {result['lane']} ({result['grants']} grant(s), "
               f"{result['requests']} request(s)).")
         return
     if args.command == "set-sensitive":
-        if not os.path.exists(db_path):
-            sys.exit(f"{db_path} does not exist.")
-        try:
-            init_db(db_path)
-            with service.connect(db_path) as conn:
-                result = service.set_sensitive(conn, args.slug, args.state == "on")
-        except DatabaseTooNew as e:
-            sys.exit(str(e))
-        except service.BoardError as e:
-            sys.exit(f"set-sensitive failed: {e.message}")
-        except sqlite3.Error as e:
-            sys.exit(f"set-sensitive failed: cannot use the database at {db_path}: {e}")
+        result = _on_board(db_path, "set-sensitive",
+                           lambda conn: service.set_sensitive(conn, args.slug, args.state == "on"))
         print(f"Lane {result['lane']} is now "
               f"{'sensitive' if result['sensitive'] else 'not sensitive'}.")
         return
-    if args.command in ("set-retention", "prune"):
+    if args.command == "prune":
+        result = _on_board(db_path, "prune", service.prune_posts)
+        if result:
+            print("Pruned " + ", ".join(f"{slug}: {n}" for slug, n in result.items()) + ".")
+        else:
+            print("Nothing to prune.")
+        return
+    if args.command == "set-retention":
         if not os.path.exists(db_path):
             sys.exit(f"{db_path} does not exist.")
         days = None
-        if args.command == "set-retention" and args.days != "off":
+        if args.days != "off":
             try:
                 days = int(args.days)
             except ValueError:
                 sys.exit("set-retention failed: days must be a whole number, or 'off'")
-        try:
-            init_db(db_path)
-            with service.connect(db_path) as conn:
-                if args.command == "prune":
-                    result = service.prune_posts(conn)
-                else:
-                    result = service.set_retention(conn, args.slug, days)
-        except DatabaseTooNew as e:
-            sys.exit(str(e))
-        except service.BoardError as e:
-            sys.exit(f"{args.command} failed: {e.message}")
-        except sqlite3.Error as e:
-            sys.exit(f"{args.command} failed: cannot use the database at {db_path}: {e}")
-        if args.command == "prune":
-            if result:
-                print("Pruned " + ", ".join(f"{slug}: {n}" for slug, n in result.items()) + ".")
-            else:
-                print("Nothing to prune.")
-        else:
-            kept = "forever" if result["days"] is None else f"{result['days']} days"
-            print(f"Lane {result['lane']} now keeps posts {kept}.")
+        result = _on_board(db_path, "set-retention",
+                           lambda conn: service.set_retention(conn, args.slug, days))
+        kept = "forever" if result["days"] is None else f"{result['days']} days"
+        print(f"Lane {result['lane']} now keeps posts {kept}.")
         return
     os.makedirs(os.path.dirname(db_path) or ".", mode=0o700, exist_ok=True)
     try:
