@@ -50,6 +50,7 @@ def test_setup_page_names_the_username_and_asks_for_the_password_twice(board):
     assert re.search(r'<input name="username" value="bob" autocomplete="username" readonly>',
                      page)
     assert 'name="password_confirm"' in page
+    assert "<strong>bob</strong>" in page  # and says it in words, not only in the field
 
 
 def test_mismatched_passwords_save_nothing_and_the_link_still_works(board):
@@ -80,11 +81,6 @@ def test_the_welcome_page_needs_a_login(board):
     r = http.post("/welcome", data={"display_name": "x"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/login"
     assert invite_rows(board) == []
-
-
-def test_the_setup_page_tells_you_your_username(board):
-    html = board.setup_page("bob").text
-    assert "username" in html.lower() and "<strong>bob</strong>" in html
 
 
 def test_the_welcome_page_asks_one_question_with_nothing_ticked(board):

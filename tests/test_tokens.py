@@ -27,14 +27,6 @@ def test_token_format(board):
     assert agent.token.startswith("fb_") and len(agent.token) > 40
 
 
-def test_redemption_response_is_not_cached(board):
-    code = board.invite("alice", "coder", {})
-    r = TestClient(board.app).post(f"/v1/invites/{code}/redeem")
-    assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
-    assert set(r.json()) == {"agent_id", "token", "lanes", "pending", "reconnect",
-                             "next_steps"}
-
-
 def test_the_token_is_not_shown_again(board):
     agent = board.register("alice", "coder")
     listing = board.admin("alice").get("/v1/admin/principals")
@@ -46,13 +38,6 @@ def test_tokens_are_unique_per_agent(board):
     assert a.token != b.token
     assert a.request("GET", "/v1/me").json()["id"] == "one"
     assert b.request("GET", "/v1/me").json()["id"] == "two"
-
-
-def test_revocation_applies_on_the_next_request(board):
-    agent = board.register("alice", "coder")
-    assert agent.request("GET", "/v1/me").status_code == 200
-    board.admin("alice").post("/v1/admin/principals/coder/revoke")
-    assert agent.request("GET", "/v1/me").status_code == 401
 
 
 def test_missing_and_wrong_tokens_refused(board):

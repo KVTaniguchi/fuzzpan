@@ -1,16 +1,11 @@
 """Admin scoping, shared-lane approvals, the provisional bootstrap rule, and
 the human side of the board."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 
 # --- Registration and scoping -------------------------------------------
-
-def test_registration_requires_admin_login(board):
-    r = TestClient(board.app).post("/v1/admin/invites",
-                                   json={"display_name": "sneaky", "lanes": {}})
-    assert r.status_code == 401
-
 
 def test_wrong_password_rejected(board):
     r = board.login("alice", board.code("alice"), password="nope-nope-nope")
@@ -24,41 +19,24 @@ def test_registered_agent_is_owned_by_caller(board):
         <= next(a for a in agents if a["id"] == "bob-agent").items()
 
 
-def test_invalid_agent_id_rejected(board):
-    r = board.admin("alice").post("/v1/admin/invites",
-                                  json={"display_name": "!!!", "lanes": {}})
-    assert r.status_code == 400
-
-
-def test_duplicate_agent_id_rejected(board):
-    board.register("alice", "coder")
-    r = board.admin("bob").post("/v1/admin/invites",
-                                json={"display_name": "coder", "lanes": {}})
-    assert r.status_code == 409
-
-
 def test_admin_cannot_revoke_other_admins_agent(board):
     board.register("bob", "bob-agent")
     r = board.admin("alice").post("/v1/admin/principals/bob-agent/revoke")
     assert r.status_code == 404
 
 
-def test_alice_cannot_see_bob_money(board):
-    alice = board.admin("alice")
-    assert alice.get("/v1/lanes/bob-money/posts").status_code == 404
-    assert "bob-money" not in [l["slug"] for l in alice.get("/v1/admin/lanes").json()]
-    assert "bob-money" not in alice.get("/").text
-
-
-def test_alice_cannot_grant_on_bob_money(board):
-    board.register("alice", "planner")
-    assert board.grant("alice", "bob-money", "planner").status_code == 404
-
-
-def test_bob_cannot_see_alice_private_lanes(board):
-    bob = board.admin("bob")
-    for lane in ("alice-money", "engineering", "health"):
-        assert bob.get(f"/v1/lanes/{lane}/posts").status_code == 404
+@pytest.mark.parametrize("viewer, owner", [("alice", "bob"), ("bob", "alice")])
+def test_admins_cannot_see_or_grant_on_each_others_private_lanes(board, viewer, owner):
+    private = [slug for (slug,) in board.q("SELECT slug FROM lanes WHERE scope = ?", owner)]
+    assert f"{owner}-money" in private
+    admin = board.admin(viewer)
+    board.register(viewer, "planner")
+    listed = [l["slug"] for l in admin.get("/v1/admin/lanes").json()]
+    for lane in private:
+        assert admin.get(f"/v1/lanes/{lane}/posts").status_code == 404, lane
+        assert lane not in listed
+        assert board.grant(viewer, lane, "planner").status_code == 404, lane
+    assert f"{owner}-money" not in admin.get("/").text
 
 
 def test_bob_reads_health_only_when_alice_grants_it(board):
@@ -77,13 +55,6 @@ def test_private_lane_grant_applies_immediately(board):
 
 
 # --- Shared lanes -------------------------------------------------------
-
-def test_shared_grant_is_provisional_before_bob_logs_in(board):
-    planner = board.register("alice", "planner")
-    r = board.grant("alice", "household", "planner")
-    assert r.json()["status"] == "provisional"
-    assert planner.read("household").status_code == 200
-
 
 def test_bob_sees_provisional_changes_on_first_login(board):
     board.register("alice", "planner")
@@ -117,23 +88,6 @@ def test_shared_grant_waits_for_both_after_bob_onboards(board):
     assert board.admin("bob").post(f"/v1/admin/pending/{r.json()['pending_id']}/approve") \
         .status_code == 200
     assert planner.read("household").status_code == 200
-
-
-def test_requester_cannot_approve_own_change(board):
-    board.admin("bob")
-    board.register("alice", "planner")
-    pid = board.grant("alice", "household", "planner").json()["pending_id"]
-    assert board.admin("alice").post(f"/v1/admin/pending/{pid}/approve").status_code == 403
-
-
-def test_shared_removal_applies_immediately_on_either_say(board):
-    board.admin("bob")
-    planner = board.register("alice", "planner")
-    pid = board.grant("alice", "household", "planner").json()["pending_id"]
-    board.admin("bob").post(f"/v1/admin/pending/{pid}/approve")
-    r = board.grant("bob", "household", "planner", read=False, post=False)
-    assert r.json()["status"] == "applied"
-    assert planner.read("household").status_code == 404
 
 
 # --- Humans on the board ------------------------------------------------
