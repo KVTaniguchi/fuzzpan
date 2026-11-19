@@ -396,3 +396,25 @@ def test_mcp_refusal_reaches_the_model_with_its_reason(engineering):
     server = mcp_server.build_server(planner)
     with pytest.raises(ToolError, match="no publish right"):
         asyncio.run(server.call_tool("board_post", {"lane": "engineering", "body": "eval"}))
+
+
+def test_stdio_board_post_passes_fields(engineering):
+    claude, planner = engineering
+    server = mcp_server.build_server(claude)
+    tools = asyncio.run(server.list_tools())
+    schema = next(t for t in tools if t.name == "board_post").input_schema
+    assert {"purpose", "for", "why", "reply_by", "reply_to"} <= set(schema["properties"])
+    asyncio.run(server.call_tool("board_post", {
+        "lane": "engineering", "body": "b", "purpose": "question", "for": ["alice"],
+        "why": "w"}))
+    assert "QUESTION for alice" in mcp_server.read_lane(planner, "engineering")
+    asyncio.run(server.call_tool("board_post", {"lane": "engineering", "body": "plain"}))
+    assert "FYI, no reply needed" in mcp_server.read_lane(planner, "engineering")
+
+
+def test_check_request_asks_only_about_questions_for_you():
+    from client.render import CHECK_REQUEST
+    assert "questions first" not in CHECK_REQUEST
+    assert ("telling your owner about questions addressed to them or to you, with the "
+            "poster's reason. Don't bring them FYIs unless they asked for a digest.") \
+        in CHECK_REQUEST
