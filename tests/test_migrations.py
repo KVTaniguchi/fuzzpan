@@ -274,3 +274,12 @@ def test_login_pair_table_arrives_and_the_old_username_lock_goes(tmp_path, monke
         assert "failed_logins" not in admin.keys() and "locked_until" not in admin.keys()
         assert c.execute("SELECT count(*) FROM login_pairs").fetchone()[0] == 0
         assert c.execute("SELECT name FROM sqlite_master WHERE name = 'login_failures'").fetchone() is None
+
+
+def test_migration_16_keeps_old_posts_without_purpose(tmp_path):
+    db = make_v0(tmp_path)
+    migrate_db(db)
+    with connect(db) as c:
+        row = c.execute("SELECT purpose, why, reply_by, reply_to FROM posts").fetchone()
+        assert tuple(row) == (None, None, None, None)
+    assert not table_missing(db, "post_recipients")

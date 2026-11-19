@@ -44,6 +44,12 @@ LAST_SEEN_INTERVAL = 60
 MAX_CONNECTIONS = 10  # OAuth connections kept per agent (decisions/0005)
 HUMAN_KINDS = {"decision", "approval", "stop"}
 POST_KINDS = {"note"} | HUMAN_KINDS
+# What a note asks of its readers (decisions/0011). A question names who must act
+# and why; an answer points at its question; everything else is fyi.
+POST_PURPOSES = {"fyi", "question", "answer"}
+MAX_RECIPIENTS = 5
+MAX_WHY_CHARS = 300
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def _now():
@@ -508,6 +514,8 @@ def prune_posts(conn, now=None):
     pruned = {}
     for lane in conn.execute("SELECT * FROM lanes WHERE retention_days IS NOT NULL").fetchall():
         cutoff = (now - timedelta(days=lane["retention_days"])).isoformat(timespec="seconds")
+        conn.execute("DELETE FROM post_recipients WHERE post_id IN (SELECT id FROM posts "
+                     "WHERE lane_id = ? AND received_at < ?)", (lane["id"], cutoff))
         count = conn.execute("DELETE FROM posts WHERE lane_id = ? AND received_at < ?",
                              (lane["id"], cutoff)).rowcount
         if count:
@@ -603,7 +611,8 @@ def me(conn, caller):
 
 # --- Posts --------------------------------------------------------------
 
-def create_post(conn, caller, slug, body, kind="note"):
+def create_post(conn, caller, slug, body, kind="note", purpose=None, recipients=None,
+                why=None, reply_by=None, reply_to=None):
     lane = known_lane(conn, caller, slug)
     if not rights(conn, caller, lane)[1]:
         raise BoardError(403, "no publish right on this lane")
@@ -615,12 +624,91 @@ def create_post(conn, caller, slug, body, kind="note"):
         raise BoardError(400, "body must be a non-empty string of valid text")
     if len(body) > MAX_BODY_CHARS:
         raise BoardError(413, "body too long")
+    purpose, recipients, why, reply_by, reply_to = _purpose_fields(
+        conn, caller, lane, kind, purpose, recipients, why, reply_by, reply_to)
     if lane["sensitive"]:
         _check_sensitive(conn, caller, lane, body)
+        if why is not None:
+            _check_sensitive(conn, caller, lane, why)
     cur = conn.execute(
-        "INSERT INTO posts (lane_id, author_id, kind, body, received_at) VALUES (?, ?, ?, ?, ?)",
-        (lane["id"], caller.id, kind, body, now_iso()))
+        "INSERT INTO posts (lane_id, author_id, kind, body, received_at, purpose, why, "
+        "reply_by, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (lane["id"], caller.id, kind, body, now_iso(), purpose, why, reply_by, reply_to))
+    conn.executemany("INSERT INTO post_recipients (post_id, principal_id) VALUES (?, ?)",
+                     [(cur.lastrowid, r) for r in recipients])
     return {"id": cur.lastrowid, "lane": slug}
+
+
+def _reader_ok(conn, principal_id, lane):
+    """Whether this principal exists, is active, and can read the lane now."""
+    row = conn.execute("SELECT id, kind, owner, status FROM principals WHERE id = ?",
+                       (principal_id,)).fetchone()
+    if row is None or row["status"] != "active":
+        return False
+    return rights(conn, Caller(row["id"], row["kind"], row["owner"]), lane)[0]
+
+
+def _owner_of(conn, principal_id):
+    row = conn.execute("SELECT owner FROM principals WHERE id = ?", (principal_id,)).fetchone()
+    return row["owner"] if row else None
+
+
+def _purpose_fields(conn, caller, lane, kind, purpose, recipients, why, reply_by, reply_to):
+    """Check what a post asks of its readers; return (purpose, recipients, why,
+    reply_by, reply_to) as stored. Only shape and rights are checked: why is
+    untrusted text, never interpreted (rule 9)."""
+    given = {"for": recipients, "why": why, "reply_by": reply_by, "reply_to": reply_to}
+    if kind in HUMAN_KINDS:
+        if purpose is not None or any(v is not None for v in given.values()):
+            raise BoardError(400, f"a {kind} has no purpose, for, why, reply_by or reply_to")
+        return None, [], None, None, None
+    if purpose is None:
+        purpose = "fyi"
+    if not isinstance(purpose, str) or purpose not in POST_PURPOSES:
+        raise BoardError(400, f"purpose must be one of {sorted(POST_PURPOSES)}")
+    if purpose in ("question", "answer") and not rights(conn, caller, lane)[0]:
+        raise BoardError(403, "no read right on this lane")
+    allowed = {"fyi": set(), "question": {"for", "why", "reply_by"},
+               "answer": {"for", "reply_to"}}[purpose]
+    extra = sorted(k for k, v in given.items() if v is not None and k not in allowed)
+    if extra:
+        raise BoardError(400, f"a {purpose} post takes no {', '.join(extra)}")
+    if purpose == "question":
+        if recipients is None or why is None:
+            raise BoardError(400, "a question needs for (who must act) and why")
+        if not _is_text(why) or not why.strip():
+            raise BoardError(400, "why must be non-empty text")
+        why = why.strip()
+        if len(why) > MAX_WHY_CHARS:
+            raise BoardError(400, f"why is at most {MAX_WHY_CHARS} characters")
+        if reply_by is not None:
+            try:
+                if not isinstance(reply_by, str) or not ISO_DATE.fullmatch(reply_by):
+                    raise ValueError
+                datetime.strptime(reply_by, "%Y-%m-%d")
+            except ValueError:
+                raise BoardError(400, "reply_by must be a date, YYYY-MM-DD") from None
+    if purpose == "answer":
+        if isinstance(reply_to, bool) or not isinstance(reply_to, int) \
+                or reply_to not in INT64 or not conn.execute(
+                "SELECT 1 FROM posts WHERE id = ? AND lane_id = ? AND purpose = 'question'",
+                (reply_to, lane["id"])).fetchone():
+            # One message for every miss, so reply_to can't probe other lanes (rule 7).
+            raise BoardError(400, "reply_to must be a question in this lane")
+    if recipients is not None:
+        if not isinstance(recipients, list) or not all(_is_text(r) for r in recipients):
+            raise BoardError(400, "for must be a list of principal ids")
+        recipients = list(dict.fromkeys(recipients))
+        if not 1 <= len(recipients) <= MAX_RECIPIENTS:
+            raise BoardError(400, f"for names 1 to {MAX_RECIPIENTS} principals")
+        for r in recipients:
+            if not _reader_ok(conn, r, lane):
+                raise BoardError(400, f"for: {r} can't read this lane")
+        if purpose == "question" and lane["scope"] == "shared" and all(
+                _owner_of(conn, r) == caller.owner for r in recipients):
+            raise BoardError(400, "this question is only for your own side; post it in "
+                                  "a lane only your owner's side reads")
+    return purpose, recipients or [], why, reply_by, reply_to
 
 
 def _refuse_sensitive(conn, caller, lane, status, reason):
@@ -643,9 +731,52 @@ def _check_sensitive(conn, caller, lane, body):
             _refuse_sensitive(conn, caller, lane, 422, "digits")
 
 
-def _post_dict(row):
+def _post_dict(row, recipients=(), answered_by=(), answered_in=()):
     return {"id": row["id"], "author": row["author_id"], "kind": row["kind"],
-            "body": row["body"], "received_at": row["received_at"]}
+            "body": row["body"], "received_at": row["received_at"],
+            "purpose": row["purpose"], "for": sorted(recipients), "why": row["why"],
+            "reply_by": row["reply_by"], "reply_to": row["reply_to"],
+            "answered_by": sorted(answered_by), "answered_in": sorted(answered_in),
+            "answered": bool(answered_in)}
+
+
+def _post_dicts(conn, lane_id, rows):
+    """Posts with their recipients and answers, in two queries for the whole page."""
+    ids = [r["id"] for r in rows]
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    recipients, answers = {}, {}
+    for r in conn.execute(f"SELECT post_id, principal_id FROM post_recipients "
+                          f"WHERE post_id IN ({marks})", ids):
+        recipients.setdefault(r["post_id"], []).append(r["principal_id"])
+    for r in conn.execute(f"SELECT p.id, p.reply_to, p.author_id, a.owner FROM posts p "
+                          f"LEFT JOIN principals a ON a.id = p.author_id WHERE p.lane_id = ? "
+                          f"AND p.purpose = 'answer' AND p.reply_to IN ({marks})",
+                          [lane_id, *ids]):
+        answers.setdefault(r["reply_to"], []).append(r)
+    named = {pid for names in recipients.values() for pid in names}
+    owners = {}
+    if named:
+        named_marks = ",".join("?" * len(named))
+        owners = {r["id"]: r["owner"] for r in conn.execute(
+            f"SELECT id, owner FROM principals WHERE id IN ({named_marks})", list(named))}
+    out = []
+    for r in rows:
+        those = answers.get(r["id"], [])
+        out.append(_post_dict(r, recipients.get(r["id"], ()), [a["id"] for a in those],
+                              _closing(recipients.get(r["id"], ()), owners, those)))
+    return out
+
+
+def _closing(recipients, owners, answers):
+    """A question is answered once someone it was for replies: a named principal,
+    an agent whose owner is named, or an agent with the same owner as a named one
+    (decisions/0011). Returns the ids of the answers that close it; anyone else's
+    answer is listed in answered_by but doesn't close it."""
+    named = set(recipients)
+    sides = named | {owners[p] for p in named if owners.get(p)}
+    return [a["id"] for a in answers if a["author_id"] in named or a["owner"] in sides]
 
 
 def read_posts(conn, caller, slug, since=None, limit=100):
@@ -660,7 +791,7 @@ def read_posts(conn, caller, slug, since=None, limit=100):
         rows = conn.execute("SELECT * FROM posts WHERE lane_id = ? ORDER BY id DESC LIMIT ?",
                             (lane["id"], limit)).fetchall()[::-1]
     return {"lane": slug, "name": lane["name"], "notice": lane["notice"],
-            "posts": [_post_dict(r) for r in rows]}
+            "posts": _post_dicts(conn, lane["id"], rows)}
 
 
 # --- Admin: principals --------------------------------------------------

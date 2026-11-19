@@ -504,3 +504,17 @@ def test_loopback_redirect_must_be_a_bare_host_and_port():
                 "http://localhost:080/cb",
                 "http://localhost :80/cb"):
         assert not redirect_allowed(bad), bad
+
+
+def test_remote_mcp_post_question(board, agent):
+    c = agent.http
+    tools = rpc(c, agent.token, "tools/list").json()["result"]["tools"]
+    post_tool = next(t for t in tools if t["name"] == "board_post")
+    assert {"purpose", "for", "why", "reply_by", "reply_to"} <= set(
+        post_tool["inputSchema"]["properties"])
+    assert post_tool["description"].startswith("Post to a lane. Most posts are fyi")
+    out = call(c, agent.token, "board_post", lane="engineering", body="b",
+               purpose="question", why="w", **{"for": ["alice"]})
+    assert "posted #" in out["content"][0]["text"], out
+    read = call(c, agent.token, "board_read_lane", lane="engineering")
+    assert "QUESTION for alice" in read["content"][0]["text"]

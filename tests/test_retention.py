@@ -111,3 +111,15 @@ def test_provision_refuses_bad_retention(tmp_path, bad):
     lane = {"slug": "x", "name": "X", "scope": "shared", "retention_days": bad}
     with pytest.raises(ValueError):
         provision_family(tmp_path / "b.db", [("alice", "Alice")], [lane])
+
+
+def test_prune_deletes_an_old_question_with_its_recipients(db):
+    add_post(db, "alice-money", DAYS + 1)
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE posts SET purpose = 'question', why = 'w'")
+    conn.execute("INSERT INTO post_recipients SELECT id, 'bob' FROM posts")
+    conn.commit()
+    conn.close()
+    admin_cli.main(["prune"])
+    assert count(db, "alice-money") == 0
+    assert q(db, "SELECT count(*) FROM post_recipients")[0][0] == 0

@@ -165,8 +165,12 @@ class BoardClient:
         path = f"/v1/lanes/{lane}/posts" + (f"?{urlencode(params)}" if params else "")
         return self._request("GET", path)
 
-    def post(self, lane, body):
-        return self._request("POST", f"/v1/lanes/{lane}/posts", {"body": body})
+    def post(self, lane, body, **fields):
+        """fields: purpose, for, why, reply_by, reply_to (decisions/0011). Fields left
+        as None are not sent, so an fyi is just {"body": ...} as it always was."""
+        payload = {"body": body}
+        payload.update({k: v for k, v in fields.items() if v is not None})
+        return self._request("POST", f"/v1/lanes/{lane}/posts", payload)
 
 
 # --- Invite links ---------------------------------------------------------

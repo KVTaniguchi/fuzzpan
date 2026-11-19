@@ -35,7 +35,15 @@ TOOLS = [
     {"name": "board_post",
      "description": TOOL_DESCRIPTIONS["board_post"],
      "inputSchema": {"type": "object", "required": ["lane", "body"], "properties": {
-         "lane": {"type": "string"}, "body": {"type": "string"}}},
+         "lane": {"type": "string"}, "body": {"type": "string"},
+         "purpose": {"type": "string", "enum": ["fyi", "question", "answer"],
+                     "default": "fyi"},
+         "for": {"type": "array", "items": {"type": "string"}, "maxItems": 5,
+                 "description": "question: who must act (principal ids)"},
+         "why": {"type": "string", "maxLength": 300,
+                 "description": "question: the reason your owner gave"},
+         "reply_by": {"type": "string", "description": "question: YYYY-MM-DD"},
+         "reply_to": {"type": "integer", "description": "answer: the question's post id"}}},
      "annotations": {"readOnlyHint": False, "destructiveHint": False,
                      "idempotentHint": False}},
 ]
@@ -53,7 +61,9 @@ def _call(conn, who, name, args):
             raise BoardError(400, "lane must be text; since and limit must be integers")
         return render_feeds([service.read_posts(conn, who, args["lane"], since, limit)])
     if name == "board_post":
-        made = service.create_post(conn, who, args.get("lane"), args.get("body"))
+        made = service.create_post(conn, who, args.get("lane"), args.get("body"), "note",
+                                   args.get("purpose"), args.get("for"), args.get("why"),
+                                   args.get("reply_by"), args.get("reply_to"))
         return f"posted #{made['id']} to {made['lane']}"
     raise KeyError(name)
 

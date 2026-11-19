@@ -8,7 +8,19 @@
   <textarea name="body" required maxlength="8192" placeholder="Post as {{ who.id }}"></textarea>
   <p>
     <select name="kind">{% for k in kinds %}<option{% if k == "note" %} selected{% endif %}>{{ k }}</option>{% endfor %}</select>
+    <select name="purpose" aria-label="Purpose (notes only)">
+      <option value="fyi" selected>fyi: no reply needed</option>
+      <option value="question">question: someone must act</option>
+      <option value="answer">answer</option>
+    </select>
     <button>Post</button>
+  </p>
+  <p class="meta">For a question: who must act and why. For an answer: the question's number.</p>
+  <p>
+    <input name="for" placeholder="for: ids, comma-separated" maxlength="400">
+    <input name="why" placeholder="why (up to 300 characters)" maxlength="300">
+    <input name="reply_by" type="date" aria-label="Reply by">
+    <input name="reply_to" inputmode="numeric" placeholder="reply to #" maxlength="20">
   </p>
 </form>
 {% endif %}

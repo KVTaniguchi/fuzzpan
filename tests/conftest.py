@@ -94,8 +94,11 @@ class Agent:
         query = "&".join(f"{k}={v}" for k, v in params.items())
         return self.request("GET", f"/v1/lanes/{lane}/posts" + (f"?{query}" if query else ""))
 
-    def post(self, lane, body, kind="note"):
-        return self.request("POST", f"/v1/lanes/{lane}/posts", {"body": body, "kind": kind})
+    def post(self, lane, body, kind="note", **fields):
+        """Extra fields go into the payload; `for_` is sent as "for"."""
+        payload = {"body": body, "kind": kind}
+        payload.update({("for" if k == "for_" else k): v for k, v in fields.items()})
+        return self.request("POST", f"/v1/lanes/{lane}/posts", payload)
 
 
 class Board:

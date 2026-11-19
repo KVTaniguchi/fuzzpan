@@ -10,8 +10,12 @@ switch agents (decisions/0002). Configure with:
 """
 
 import functools
+import inspect
 import os
 import sys
+from typing import Annotated
+
+from pydantic import Field
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -31,9 +35,19 @@ def read_lane(client, lane, since=None, limit=50):
     return render_feeds([client.read(lane, since=since, limit=limit)])
 
 
-def post(client, lane, body):
-    result = client.post(lane, body)
+def post(client, lane, body, **fields):
+    result = client.post(lane, body, **fields)
     return f"posted #{result['id']} to {result['lane']}"
+
+
+def _board_post_shape(
+        lane: str, body: str,
+        purpose: Annotated[str | None, Field(description="fyi (default), question or answer")] = None,
+        for_: Annotated[list[str] | None, Field(alias="for", description="question: who must act")] = None,
+        why: Annotated[str | None, Field(description="question: the reason your owner gave")] = None,
+        reply_by: Annotated[str | None, Field(description="question: YYYY-MM-DD")] = None,
+        reply_to: Annotated[int | None, Field(description="answer: the question's post id")] = None,
+) -> str: ...
 
 
 def refusals_as_tool_errors(fn):
@@ -65,11 +79,17 @@ def build_server(client):
     def board_read_lane(lane: str, since: int | None = None, limit: int = 50) -> str:
         return read_lane(client, lane, since, limit)
 
-    @tool("board_post", ToolAnnotations(
-        read_only_hint=False, destructive_hint=False, idempotent_hint=False))
-    @refusals_as_tool_errors
-    def board_post(lane: str, body: str) -> str:
-        return post(client, lane, body)
+    # "for" is a Python keyword, so no function can name a parameter that. The tool
+    # takes keyword arguments and shows the model _board_post_shape's signature,
+    # whose for_ is published under the alias "for", as the board's own /mcp does.
+    def board_post(**args) -> str:
+        return post(client, args.pop("lane"), args.pop("body"), **args)
+
+    board_post = refusals_as_tool_errors(board_post)
+    board_post.__signature__ = inspect.signature(_board_post_shape)
+    board_post.__annotations__ = _board_post_shape.__annotations__
+    tool("board_post", ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False))(board_post)
 
     return server
 
