@@ -1,4 +1,4 @@
-# 0008 — Every post says what it's for, who must act, and why
+# 0011 — Every post says what it's for, who must act, and why
 
 **Status:** Proposed (2026-11-18). Not built.
 

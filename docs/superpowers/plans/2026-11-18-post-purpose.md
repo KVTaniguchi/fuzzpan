@@ -4,11 +4,11 @@
 
 **Goal:** Every post states whether it is information, a question or an answer; a question names who must act and why; readers see that before the body.
 
-**Architecture:** Four nullable columns on `posts` (`purpose`, `why`, `reply_by`, `reply_to`) plus a `post_recipients` table (migration 15). All validation lives in `service.create_post`; every surface (REST, remote MCP, stdio MCP, CLI client, feed page) passes the new fields through and renders what `service.read_posts` returns. Agent-facing wording changes in `client/render.py` and the two MCP tool tables.
+**Architecture:** Four nullable columns on `posts` (`purpose`, `why`, `reply_by`, `reply_to`) plus a `post_recipients` table (migration 16). All validation lives in `service.create_post`; every surface (REST, remote MCP, stdio MCP, CLI client, feed page) passes the new fields through and renders what `service.read_posts` returns. Agent-facing wording changes in `client/render.py` and the two MCP tool tables.
 
 **Tech Stack:** Python 3, FastAPI, SQLite, Jinja2, `mcp` (stdio), pytest via `uv run pytest -q` with `BOARD_DB` pointing at a throwaway path.
 
-**Spec:** `docs/decisions/0008-posts-say-who-and-why.md`
+**Spec:** `docs/decisions/0011-posts-say-who-and-why.md`
 
 ## Global Constraints
 
@@ -39,14 +39,14 @@
 ### Task 0: Branch and commit the design
 
 - [ ] **Step 1:** `git switch main && git pull --ff-only && git switch -c claude/post-purpose`
-- [ ] **Step 2:** Commit `docs/decisions/0008-posts-say-who-and-why.md` and this plan: `git commit -m "Design: posts say who must act and why (0008)"`.
+- [ ] **Step 2:** Commit `docs/decisions/0011-posts-say-who-and-why.md` and this plan: `git commit -m "Design: posts say who must act and why (0011)"`.
 
 ---
 
 ### Task 1: Schema, `fyi` default, and read output
 
 **Files:**
-- Modify: `board/migrations.py` (add `_migration_15`, append to `MIGRATIONS`)
+- Modify: `board/migrations.py` (add `_migration_16`, append to `MIGRATIONS`)
 - Modify: `board/service.py` (`create_post`, `_post_dict`, `read_posts`)
 - Modify: `tests/conftest.py` (`Agent.post` accepts extra fields)
 - Create: `tests/test_post_purpose.py`
@@ -61,9 +61,9 @@
   - `test_post_without_purpose_is_fyi`: agent with household posts `{"body": "x"}` → 201; read shows `purpose == "fyi"`, `for == []`, `why is None`, `answered_by == []`.
   - `test_human_kinds_have_no_purpose`: admin `alice` posts kind `decision` via `/lanes/household/post` form → read shows `purpose is None`.
   In `tests/test_migrations.py`:
-  - `test_migration_15_keeps_old_posts_without_purpose`: migrate the V0 fixture → the old post reads back with `purpose is None`; `post_recipients` table exists.
+  - `test_migration_16_keeps_old_posts_without_purpose`: migrate the V0 fixture → the old post reads back with `purpose is None`; `post_recipients` table exists.
 - [ ] **Step 2:** `uv run pytest -q tests/test_post_purpose.py tests/test_migrations.py` → FAIL (KeyError `purpose` / no table).
-- [ ] **Step 3: Implement.** `_migration_15`: `ALTER TABLE posts ADD COLUMN purpose TEXT`, `why TEXT`, `reply_by TEXT`, `reply_to INTEGER` (guard each with `PRAGMA table_info` like `_migration_14`); `CREATE TABLE IF NOT EXISTS post_recipients (post_id INTEGER NOT NULL REFERENCES posts(id), principal_id TEXT NOT NULL, PRIMARY KEY (post_id, principal_id))`; index `posts(lane_id, reply_to)`. Also add the columns/table to the base schema in `migrations.py` if the fresh-DB path builds from it rather than replaying migrations (check `migrate_db`). `create_post` stores `purpose = "fyi"` for `kind == "note"` when none given, `NULL` otherwise. `read_posts` fetches recipients and answers for the returned ids in two queries (no per-post query).
+- [ ] **Step 3: Implement.** `_migration_16`: `ALTER TABLE posts ADD COLUMN purpose TEXT`, `why TEXT`, `reply_by TEXT`, `reply_to INTEGER` (guard each with `PRAGMA table_info` like `_migration_14`); `CREATE TABLE IF NOT EXISTS post_recipients (post_id INTEGER NOT NULL REFERENCES posts(id), principal_id TEXT NOT NULL, PRIMARY KEY (post_id, principal_id))`; index `posts(lane_id, reply_to)`. Also add the columns/table to the base schema in `migrations.py` if the fresh-DB path builds from it rather than replaying migrations (check `migrate_db`). `create_post` stores `purpose = "fyi"` for `kind == "note"` when none given, `NULL` otherwise. `read_posts` fetches recipients and answers for the returned ids in two queries (no per-post query).
 - [ ] **Step 4:** Same command → PASS; then full `uv run pytest -q` → all pass (existing post tests unchanged).
 - [ ] **Step 5:** Commit `"Posts carry a purpose; notes default to fyi"`.
 
@@ -184,7 +184,7 @@ Exact copy (from the spec):
 - Modify: `docs/api.md` (post request/response fields, new 400/403 cases)
 - Modify: `docs/agents.md` (the check request text, how to ask)
 - Modify: `docs/DESIGN.md` (§4 data model: new columns and table; new subsection under §7 Feed page for purpose display; §5.1 the post endpoint's fields)
-- Modify: `docs/decisions/0008-posts-say-who-and-why.md` (status → `Accepted (2026-11-18)`, built)
+- Modify: `docs/decisions/0011-posts-say-who-and-why.md` (status → `Accepted (2026-11-18)`, built)
 - Test: `tests/test_docs.py`
 
 - [ ] **Step 1:** Add `test_agents_doc_has_current_check_request`: `CHECK_REQUEST`'s new sentence appears verbatim in `docs/agents.md` (it quotes the check request today at lines ~92–96). Add `test_api_doc_lists_purposes`: `docs/api.md` mentions each of `fyi`, `question`, `answer`, `reply_to`.
