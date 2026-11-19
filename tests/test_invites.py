@@ -105,7 +105,10 @@ def test_redeemed_token_works_and_is_returned_only_once(board):
 def test_redemption_and_page_are_not_cached(board):
     code = board.invite("alice", "Coder", {})
     assert TestClient(board.app).get(f"/invite/{code}").headers["cache-control"] == "no-store"
-    assert redeem_code(board, code).headers["cache-control"] == "no-store"
+    redeemed = redeem_code(board, code)
+    assert redeemed.status_code == 200 and redeemed.headers["cache-control"] == "no-store"
+    assert set(redeemed.json()) == {"agent_id", "token", "lanes", "pending", "reconnect",
+                                    "next_steps"}
     created = board.admin("alice").post("/v1/admin/invites",
                                         json={"display_name": "Other", "lanes": {}})
     assert created.headers["cache-control"] == "no-store"
@@ -218,15 +221,6 @@ def test_cannot_reconnect_a_revoked_agent(board):
     board.admin("alice").post("/v1/admin/principals/coder/revoke")
     r = board.admin("alice").post("/v1/admin/principals/coder/reconnect")
     assert r.status_code == 404
-
-
-def test_agent_revoked_while_a_reconnect_invite_is_open_stays_revoked(board):
-    board.register("alice", "coder")
-    code = reconnect_code(board, "alice", "coder")
-    board.admin("alice").post("/v1/admin/principals/coder/revoke")
-    assert redeem_code(board, code).status_code == 410
-    assert board.q("SELECT status, token_hash FROM principals WHERE id = 'coder'") == \
-        [("revoked", None)]
 
 
 def test_cannot_reconnect_another_admins_agent(board):

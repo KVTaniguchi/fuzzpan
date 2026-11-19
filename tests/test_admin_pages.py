@@ -337,6 +337,8 @@ def test_revoking_cancels_the_agents_open_reconnect_invites(board):
     assert "Links not used yet" not in alice.get("/admin").text
     assert board.anon().post(f"/v1/invites/{code}/redeem").status_code == 410
     assert board.anon().get(f"/invite/{code}").status_code == 410
+    assert board.q("SELECT status, token_hash FROM principals WHERE id = 'bot'") == \
+        [("revoked", None)]
 
 
 def test_revoking_through_the_page_cancels_them_too(board):
