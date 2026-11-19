@@ -211,3 +211,21 @@ def test_the_siri_guide_uses_real_routes_and_keeps_the_rules():
     paths = {getattr(r, "path", "") for r in app.routes}
     assert "/v1/invites/{code}/redeem" in paths and "/v1/lanes/{slug}/posts" in paths
     assert "siri-shortcuts.md" in AGENTS and "siri-shortcuts.md" in section(12)
+
+
+def test_api_doc_lists_post_purposes():
+    api = (ROOT / "docs/api.md").read_text()
+    for word in ("`fyi`", "`question`", "`answer`", "`for`", "`why`", "`reply_by`",
+                 "`reply_to`", "`answered_by`", "`answered`"):
+        assert word in api, word
+
+
+def test_design_describes_post_purpose():
+    assert "purpose" in section(4) and "0011" in section(4)
+    assert "purpose" in section(7)
+    assert "0011" in re.search(r"^### 5\.1 .*?(?=^### )", DESIGN, re.S | re.M).group(0)
+
+
+def test_post_purpose_decision_is_accepted():
+    text = (ROOT / "docs/decisions/0011-posts-say-who-and-why.md").read_text()
+    assert "**Status:** Accepted" in text
