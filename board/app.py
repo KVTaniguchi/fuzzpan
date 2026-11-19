@@ -672,11 +672,15 @@ def create_app(db_path, secure_cookies=True):
 
     @app.post("/lanes/{slug}/post")
     def lane_post(slug: str, body: str = Form(...), kind: str = Form("note"),
-                  purpose: str | None = Form(None),
+                  purpose: str | None = Form(None), reply_to: str | None = Form(None),
                   who=Depends(page_who), conn=get_db):
         # A browser sends a newline in a textarea as CRLF; count and keep it as one.
+        # A blank form field means the field wasn't given.
+        reply = reply_to.strip() if reply_to else ""
+        if reply and not reply.isdigit():
+            raise BoardError(400, "reply_to must be a post number")
         service.create_post(conn, who, slug, body.replace("\r\n", "\n"), kind,
-                            purpose or None)
+                            purpose or None, reply_to=int(reply) if reply else None)
         return RedirectResponse(f"/lanes/{slug}", status_code=303)
 
     @app.get("/invite/{code}")

@@ -688,6 +688,12 @@ def _purpose_fields(conn, caller, lane, kind, purpose, recipients, why, reply_by
                 datetime.strptime(reply_by, "%Y-%m-%d")
             except ValueError:
                 raise BoardError(400, "reply_by must be a date, YYYY-MM-DD") from None
+    if purpose == "answer":
+        if isinstance(reply_to, bool) or not isinstance(reply_to, int) or not conn.execute(
+                "SELECT 1 FROM posts WHERE id = ? AND lane_id = ? AND purpose = 'question'",
+                (reply_to, lane["id"])).fetchone():
+            # One message for every miss, so reply_to can't probe other lanes (rule 7).
+            raise BoardError(400, "reply_to must be a question in this lane")
     if recipients is not None:
         if not isinstance(recipients, list) or not all(_is_text(r) for r in recipients):
             raise BoardError(400, "for must be a list of principal ids")
@@ -742,11 +748,32 @@ def _post_dicts(conn, lane_id, rows):
     for r in conn.execute(f"SELECT post_id, principal_id FROM post_recipients "
                           f"WHERE post_id IN ({marks})", ids):
         recipients.setdefault(r["post_id"], []).append(r["principal_id"])
-    for r in conn.execute(f"SELECT id, reply_to, author_id FROM posts WHERE lane_id = ? "
-                          f"AND reply_to IN ({marks})", [lane_id, *ids]):
-        answers.setdefault(r["reply_to"], []).append(r["id"])
-    return [_post_dict(r, recipients.get(r["id"], ()), answers.get(r["id"], ()))
-            for r in rows]
+    for r in conn.execute(f"SELECT p.id, p.reply_to, p.author_id, a.owner FROM posts p "
+                          f"LEFT JOIN principals a ON a.id = p.author_id WHERE p.lane_id = ? "
+                          f"AND p.purpose = 'answer' AND p.reply_to IN ({marks})",
+                          [lane_id, *ids]):
+        answers.setdefault(r["reply_to"], []).append(r)
+    named = {pid for names in recipients.values() for pid in names}
+    owners = {}
+    if named:
+        named_marks = ",".join("?" * len(named))
+        owners = {r["id"]: r["owner"] for r in conn.execute(
+            f"SELECT id, owner FROM principals WHERE id IN ({named_marks})", list(named))}
+    out = []
+    for r in rows:
+        those = answers.get(r["id"], [])
+        out.append(_post_dict(r, recipients.get(r["id"], ()), [a["id"] for a in those],
+                              _answered(recipients.get(r["id"], ()), owners, those)))
+    return out
+
+
+def _answered(recipients, owners, answers):
+    """A question is answered once someone it was for replies: a named principal,
+    an agent whose owner is named, or an agent with the same owner as a named one
+    (decisions/0011). Anyone else's answer is listed but doesn't close it."""
+    named = set(recipients)
+    sides = named | {owners[p] for p in named if owners.get(p)}
+    return any(a["author_id"] in named or a["owner"] in sides for a in answers)
 
 
 def read_posts(conn, caller, slug, since=None, limit=100):
