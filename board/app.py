@@ -672,15 +672,25 @@ def create_app(db_path, secure_cookies=True):
 
     @app.post("/lanes/{slug}/post")
     def lane_post(slug: str, body: str = Form(...), kind: str = Form("note"),
-                  purpose: str | None = Form(None), reply_to: str | None = Form(None),
+                  purpose: str | None = Form(None), for_: str | None = Form(None, alias="for"),
+                  why: str | None = Form(None), reply_by: str | None = Form(None),
+                  reply_to: str | None = Form(None),
                   who=Depends(page_who), conn=get_db):
         # A browser sends a newline in a textarea as CRLF; count and keep it as one.
-        # A blank form field means the field wasn't given.
-        reply = reply_to.strip() if reply_to else ""
-        if reply and not reply.isdigit():
+        # Every field is on the form whatever the purpose, so blank means not given.
+        # "for" is comma-separated ids.
+        def given(value):
+            return value.strip() or None if value is not None else None
+        names = [n.strip() for n in (for_ or "").split(",") if n.strip()]
+        reply = given(reply_to)
+        if reply is not None and not reply.isdigit():
             raise BoardError(400, "reply_to must be a post number")
+        purpose = given(purpose)
+        if kind != "note" and purpose == "fyi":
+            purpose = None  # the picker's default; a decision, approval or stop has none
         service.create_post(conn, who, slug, body.replace("\r\n", "\n"), kind,
-                            purpose or None, reply_to=int(reply) if reply else None)
+                            purpose, names or None, given(why), given(reply_by),
+                            int(reply) if reply is not None else None)
         return RedirectResponse(f"/lanes/{slug}", status_code=303)
 
     @app.get("/invite/{code}")

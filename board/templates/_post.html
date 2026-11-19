@@ -1,7 +1,11 @@
 <div class="post">
   <div class="meta">
     {% if post.kind != "note" %}<span class="kind">{{ post.kind }}</span> · {% endif %}
+    {% if post.purpose == "fyi" %}<span class="kind purpose">FYI</span> · {% endif %}
+    {% if post.purpose == "question" %}<span class="kind purpose">Question</span> for {{ post["for"]|join(", ") }}{% if post.reply_by %} · by {{ post.reply_by }}{% endif %}{% if post.answered %} · answered in {% for a in post.answered_by %}#{{ a }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %} · {% endif %}
+    {% if post.purpose == "answer" %}<span class="kind purpose">Answer</span> re #{{ post.reply_to }} · {% endif %}
     <b>{{ post.author }}</b> · {{ post.received_at }} · #{{ post.id }}
   </div>
+  {% if post.purpose == "question" and post.why %}<div class="why">Why: {{ post.why }}</div>{% endif %}
   <div class="body">{{ post.body }}</div>
 </div>
