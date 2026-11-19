@@ -508,6 +508,8 @@ def prune_posts(conn, now=None):
     pruned = {}
     for lane in conn.execute("SELECT * FROM lanes WHERE retention_days IS NOT NULL").fetchall():
         cutoff = (now - timedelta(days=lane["retention_days"])).isoformat(timespec="seconds")
+        conn.execute("DELETE FROM post_recipients WHERE post_id IN (SELECT id FROM posts "
+                     "WHERE lane_id = ? AND received_at < ?)", (lane["id"], cutoff))
         count = conn.execute("DELETE FROM posts WHERE lane_id = ? AND received_at < ?",
                              (lane["id"], cutoff)).rowcount
         if count:
@@ -603,7 +605,8 @@ def me(conn, caller):
 
 # --- Posts --------------------------------------------------------------
 
-def create_post(conn, caller, slug, body, kind="note"):
+def create_post(conn, caller, slug, body, kind="note", purpose=None, recipients=None,
+                why=None, reply_by=None, reply_to=None):
     lane = known_lane(conn, caller, slug)
     if not rights(conn, caller, lane)[1]:
         raise BoardError(403, "no publish right on this lane")
@@ -617,9 +620,12 @@ def create_post(conn, caller, slug, body, kind="note"):
         raise BoardError(413, "body too long")
     if lane["sensitive"]:
         _check_sensitive(conn, caller, lane, body)
+    if kind == "note" and purpose is None:
+        purpose = "fyi"
     cur = conn.execute(
-        "INSERT INTO posts (lane_id, author_id, kind, body, received_at) VALUES (?, ?, ?, ?, ?)",
-        (lane["id"], caller.id, kind, body, now_iso()))
+        "INSERT INTO posts (lane_id, author_id, kind, body, received_at, purpose) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (lane["id"], caller.id, kind, body, now_iso(), purpose))
     return {"id": cur.lastrowid, "lane": slug}
 
 
@@ -643,9 +649,29 @@ def _check_sensitive(conn, caller, lane, body):
             _refuse_sensitive(conn, caller, lane, 422, "digits")
 
 
-def _post_dict(row):
+def _post_dict(row, recipients=(), answered_by=(), answered=False):
     return {"id": row["id"], "author": row["author_id"], "kind": row["kind"],
-            "body": row["body"], "received_at": row["received_at"]}
+            "body": row["body"], "received_at": row["received_at"],
+            "purpose": row["purpose"], "for": sorted(recipients), "why": row["why"],
+            "reply_by": row["reply_by"], "reply_to": row["reply_to"],
+            "answered_by": sorted(answered_by), "answered": answered}
+
+
+def _post_dicts(conn, lane_id, rows):
+    """Posts with their recipients and answers, in two queries for the whole page."""
+    ids = [r["id"] for r in rows]
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    recipients, answers = {}, {}
+    for r in conn.execute(f"SELECT post_id, principal_id FROM post_recipients "
+                          f"WHERE post_id IN ({marks})", ids):
+        recipients.setdefault(r["post_id"], []).append(r["principal_id"])
+    for r in conn.execute(f"SELECT id, reply_to, author_id FROM posts WHERE lane_id = ? "
+                          f"AND reply_to IN ({marks})", [lane_id, *ids]):
+        answers.setdefault(r["reply_to"], []).append(r["id"])
+    return [_post_dict(r, recipients.get(r["id"], ()), answers.get(r["id"], ()))
+            for r in rows]
 
 
 def read_posts(conn, caller, slug, since=None, limit=100):
@@ -660,7 +686,7 @@ def read_posts(conn, caller, slug, since=None, limit=100):
         rows = conn.execute("SELECT * FROM posts WHERE lane_id = ? ORDER BY id DESC LIMIT ?",
                             (lane["id"], limit)).fetchall()[::-1]
     return {"lane": slug, "name": lane["name"], "notice": lane["notice"],
-            "posts": [_post_dict(r) for r in rows]}
+            "posts": _post_dicts(conn, lane["id"], rows)}
 
 
 # --- Admin: principals --------------------------------------------------

@@ -104,8 +104,11 @@ sessions     (token PK, admin, expires_at, totp_pending, totp_pending_expires_at
               -- authenticator secret for 10 minutes while it is confirmed (§5.3)
 lanes        (id PK, slug UNIQUE, name, scope, notice, sensitive, retention_days, created_at)
 grants       (lane_id, principal_id, can_read, can_post, PRIMARY KEY(lane_id, principal_id))
-posts        (id PK autoinc, lane_id, author_id, kind, body, received_at)  -- append-only; only
-              -- `admin_cli prune` deletes, by age (§3)
+posts        (id PK autoinc, lane_id, author_id, kind, body, received_at,
+              purpose NULL|fyi|question|answer, why, reply_by, reply_to)  -- append-only; only
+              -- `admin_cli prune` deletes, by age (§3). purpose etc.: decisions/0011
+post_recipients (post_id, principal_id, PRIMARY KEY(post_id, principal_id))  -- who a
+              -- question is for; pruned with its post
 pending      (id PK, lane_id, principal_id, before_json, after_json, requested_by,
               status pending|provisional|approved|ratified|rejected|superseded,
               created_at, resolved_by, resolved_at,

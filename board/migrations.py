@@ -670,10 +670,28 @@ def _migration_15(conn):
         )""")
 
 
+def _migration_16(conn):
+    """Every post says what it is for (decisions/0011): fyi, question or answer.
+    A question names who must act (post_recipients) and why, and may give a
+    reply-by date; an answer points at its question. Older posts keep NULLs."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(posts)")}
+    for column, sql_type in (("purpose", "TEXT"), ("why", "TEXT"),
+                             ("reply_by", "TEXT"), ("reply_to", "INTEGER")):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE posts ADD COLUMN {column} {sql_type}")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS post_recipients (
+            post_id      INTEGER NOT NULL REFERENCES posts(id),
+            principal_id TEXT NOT NULL,
+            PRIMARY KEY (post_id, principal_id)
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS posts_reply_to ON posts (lane_id, reply_to)")
+
+
 MIGRATIONS = [_migration_1, _migration_2, _migration_3, _migration_4, _migration_5,
               _migration_6, _migration_7, _migration_8, _migration_9, _migration_10,
               _migration_11, _migration_12, _migration_13, _migration_14,
-              _migration_15]
+              _migration_15, _migration_16]
 
 
 class DatabaseTooNew(Exception):
