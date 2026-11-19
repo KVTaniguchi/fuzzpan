@@ -6,7 +6,7 @@ from client.render import UNTRUSTED, render_feed, render_feeds
 def post(id_, purpose, **extra):
     p = {"id": id_, "received_at": "2026-11-20T21:09:39+00:00", "author": "planner",
          "kind": "note", "body": "the body", "purpose": purpose, "for": [], "why": None,
-         "reply_by": None, "reply_to": None, "answered_by": [], "answered": False}
+         "reply_by": None, "reply_to": None, "answered_by": [], "answered_in": [], "answered": False}
     p.update(extra)
     return p
 
@@ -19,7 +19,7 @@ def test_render_marks_purpose():
     text = render_feed(feed(
         post(1, "fyi"),
         post(10, "question", **{"for": ["alice"]}, why="w", reply_by="2026-11-22",
-             answered_by=[12], answered=True),
+             answered_by=[11, 12], answered_in=[12], answered=True),
         post(12, "answer", reply_to=10),
         post(13, None)))
     lines = text.splitlines()

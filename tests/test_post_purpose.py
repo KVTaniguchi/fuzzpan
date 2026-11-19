@@ -236,3 +236,20 @@ def test_answer_needs_read_right(board, family):
     q = question_id(b1, for_=["alice"], why="w")
     a2 = member(board, "alice", "a2", "household", read=False, post=True)
     assert answer(a2, q).status_code == 403
+
+
+def test_out_of_range_reply_to_is_a_400(family):
+    a1, _ = family
+    r = answer(a1, 2 ** 70)
+    assert r.status_code == 400
+    assert r.json()["error"] == "reply_to must be a question in this lane"
+
+
+def test_only_closing_answers_count_as_answered_in(board, family):
+    a1, b1 = family
+    q = question_id(a1, for_=["b1"], why="w")
+    stranger = answer(a1, q).json()["id"]
+    right = answer(b1, q).json()["id"]
+    post = post_of(a1, q)
+    assert post["answered_by"] == [stranger, right]
+    assert post["answered_in"] == [right]

@@ -83,3 +83,9 @@ def test_form_decision_with_the_default_purpose_still_posts(board):
     assert r.status_code == 303, r.text
     post = a1.read("household").json()["posts"][-1]
     assert (post["kind"], post["purpose"]) == ("decision", None)
+
+
+def test_form_odd_reply_to_is_a_400_page(board):
+    for bad in ("²", "1" * 25):
+        r = form_post(board, purpose="answer", reply_to=bad)
+        assert r.status_code == 400 and "<html" in r.text, bad

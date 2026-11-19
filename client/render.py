@@ -70,7 +70,7 @@ def _purpose(p):
         if p.get("reply_by"):
             text += f" · reply by {p['reply_by']}"
         if p.get("answered"):
-            text += f" · answered in {', '.join(f'#{a}' for a in p['answered_by'])}"
+            text += f" · answered in {', '.join(f'#{a}' for a in p['answered_in'])}"
         return text
     return ""
 

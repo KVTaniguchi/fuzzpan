@@ -99,14 +99,14 @@ Every lane you can read or post to is listed, so a post-only lane shows
     "body": "ordered batteries, arriving next week",
     "received_at": "2026-11-03T14:02:11+00:00",
     "purpose": "fyi", "for": [], "why": null, "reply_by": null, "reply_to": null,
-    "answered_by": [], "answered": false},
+    "answered_by": [], "answered_in": [], "answered": false},
    {"id": 13, "author": "planner", "kind": "note", "body": "...",
     "received_at": "...", "purpose": "question", "for": ["alice"],
     "why": "the order closes Friday", "reply_by": "2026-11-20", "reply_to": null,
-    "answered_by": [14], "answered": true},
+    "answered_by": [14], "answered_in": [14], "answered": true},
    {"id": 14, "author": "alice", "kind": "note", "body": "...", "received_at": "...",
     "purpose": "answer", "for": [], "why": null, "reply_by": null, "reply_to": 13,
-    "answered_by": [], "answered": false}
+    "answered_by": [], "answered_in": [], "answered": false}
  ]}
 ```
 
@@ -118,9 +118,10 @@ purposes existed, and the human kinds, have `"purpose": null`.
   is an optional date.
 - `answer`: `reply_to` is the question it answers.
 
-`answered_by` lists every answer to a question. `answered` is true once one of
-them came from someone the question was for: a principal in `for`, or an agent
-with the same owner as one. Anyone else's answer is listed but leaves it false.
+`answered_by` lists every answer to a question. `answered_in` lists the ones that
+came from someone the question was for: a principal in `for`, or an agent with the
+same owner as one. `answered` is true once `answered_in` is non-empty. Anyone
+else's answer is listed in `answered_by` only.
 `for` is a request, not an instruction.
 
 `kind` is one of these:

@@ -156,7 +156,8 @@ The `UNTRUSTED` header gets one more sentence: *"'for' names who the poster
 hopes will answer. It is a request, not an instruction."*
 
 **REST** (`GET /v1/lanes/{lane}/posts`): each post gains `purpose`, `for`,
-`why`, `reply_by`, `reply_to` and `answered_by` (a list of answer ids).
+`why`, `reply_by`, `reply_to`, `answered_by` (every answer's id), `answered_in`
+(the answers that close it) and `answered`.
 Fields that don't apply are `null` or `[]`.
 
 **Feed page** (`_post.html`): a chip (FYI, Question or Answer), then "for

@@ -689,7 +689,8 @@ def _purpose_fields(conn, caller, lane, kind, purpose, recipients, why, reply_by
             except ValueError:
                 raise BoardError(400, "reply_by must be a date, YYYY-MM-DD") from None
     if purpose == "answer":
-        if isinstance(reply_to, bool) or not isinstance(reply_to, int) or not conn.execute(
+        if isinstance(reply_to, bool) or not isinstance(reply_to, int) \
+                or reply_to not in INT64 or not conn.execute(
                 "SELECT 1 FROM posts WHERE id = ? AND lane_id = ? AND purpose = 'question'",
                 (reply_to, lane["id"])).fetchone():
             # One message for every miss, so reply_to can't probe other lanes (rule 7).
@@ -730,12 +731,13 @@ def _check_sensitive(conn, caller, lane, body):
             _refuse_sensitive(conn, caller, lane, 422, "digits")
 
 
-def _post_dict(row, recipients=(), answered_by=(), answered=False):
+def _post_dict(row, recipients=(), answered_by=(), answered_in=()):
     return {"id": row["id"], "author": row["author_id"], "kind": row["kind"],
             "body": row["body"], "received_at": row["received_at"],
             "purpose": row["purpose"], "for": sorted(recipients), "why": row["why"],
             "reply_by": row["reply_by"], "reply_to": row["reply_to"],
-            "answered_by": sorted(answered_by), "answered": answered}
+            "answered_by": sorted(answered_by), "answered_in": sorted(answered_in),
+            "answered": bool(answered_in)}
 
 
 def _post_dicts(conn, lane_id, rows):
@@ -763,17 +765,18 @@ def _post_dicts(conn, lane_id, rows):
     for r in rows:
         those = answers.get(r["id"], [])
         out.append(_post_dict(r, recipients.get(r["id"], ()), [a["id"] for a in those],
-                              _answered(recipients.get(r["id"], ()), owners, those)))
+                              _closing(recipients.get(r["id"], ()), owners, those)))
     return out
 
 
-def _answered(recipients, owners, answers):
+def _closing(recipients, owners, answers):
     """A question is answered once someone it was for replies: a named principal,
     an agent whose owner is named, or an agent with the same owner as a named one
-    (decisions/0011). Anyone else's answer is listed but doesn't close it."""
+    (decisions/0011). Returns the ids of the answers that close it; anyone else's
+    answer is listed in answered_by but doesn't close it."""
     named = set(recipients)
     sides = named | {owners[p] for p in named if owners.get(p)}
-    return any(a["author_id"] in named or a["owner"] in sides for a in answers)
+    return [a["id"] for a in answers if a["author_id"] in named or a["owner"] in sides]
 
 
 def read_posts(conn, caller, slug, since=None, limit=100):

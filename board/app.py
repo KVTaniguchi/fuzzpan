@@ -683,7 +683,7 @@ def create_app(db_path, secure_cookies=True):
             return value.strip() or None if value is not None else None
         names = [n.strip() for n in (for_ or "").split(",") if n.strip()]
         reply = given(reply_to)
-        if reply is not None and not reply.isdigit():
+        if reply is not None and not (reply.isascii() and reply.isdigit() and len(reply) <= 19):
             raise BoardError(400, "reply_to must be a post number")
         purpose = given(purpose)
         if kind != "note" and purpose == "fyi":
