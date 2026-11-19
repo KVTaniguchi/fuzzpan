@@ -342,7 +342,10 @@ def create_app(db_path, secure_cookies=True):
             raise BoardError(413, "request too large")
         payload = json_object(raw)
         return await run_in_threadpool(service.create_post, conn, who, slug,
-                                       payload.get("body"), payload.get("kind", "note"))
+                                       payload.get("body"), payload.get("kind", "note"),
+                                       payload.get("purpose"), payload.get("for"),
+                                       payload.get("why"), payload.get("reply_by"),
+                                       payload.get("reply_to"))
 
     # --- Admin API -------------------------------------------------------
 
@@ -669,9 +672,11 @@ def create_app(db_path, secure_cookies=True):
 
     @app.post("/lanes/{slug}/post")
     def lane_post(slug: str, body: str = Form(...), kind: str = Form("note"),
+                  purpose: str | None = Form(None),
                   who=Depends(page_who), conn=get_db):
         # A browser sends a newline in a textarea as CRLF; count and keep it as one.
-        service.create_post(conn, who, slug, body.replace("\r\n", "\n"), kind)
+        service.create_post(conn, who, slug, body.replace("\r\n", "\n"), kind,
+                            purpose or None)
         return RedirectResponse(f"/lanes/{slug}", status_code=303)
 
     @app.get("/invite/{code}")
