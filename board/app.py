@@ -30,7 +30,12 @@ from client.render import CHECK_REQUEST
 # Under uvicorn's logger so it lands in the service log at INFO.
 log = logging.getLogger("uvicorn.error.board")
 
+# With Secure cookies the session cookie takes the __Host- prefix: the browser then
+# keeps it only if it is Secure, has Path=/ and names no Domain, so a sibling host
+# (any other name under a shared wildcard-DNS domain, say) can't plant or shadow it. Plain-HTTP local runs can't
+# use the prefix, so they keep the bare name.
 SESSION_COOKIE = "board_session"
+SECURE_SESSION_COOKIE = "__Host-board_session"
 # Paths whose next segment is a live credential (invite code, setup token).
 _SECRET_PATH = re.compile(r"(/(?:invite|v1/invites|setup)/)[^/\s?\"]+")
 
@@ -146,6 +151,7 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 def create_app(db_path, secure_cookies=True):
     """secure_cookies=False is for plain-HTTP local development only."""
+    session_cookie = SECURE_SESSION_COOKIE if secure_cookies else SESSION_COOKIE
     init_db(db_path)
     access_log = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, RedactSecretPaths) for f in access_log.filters):
@@ -183,7 +189,7 @@ def create_app(db_path, secure_cookies=True):
 
     def page_admin(request, conn):
         """The admin whose session cookie came with the request, or None."""
-        return service.session_admin(conn, request.cookies.get(SESSION_COOKIE))
+        return service.session_admin(conn, request.cookies.get(session_cookie))
 
     def session_who(request):
         with connect(app.state.db_path) as conn:
@@ -220,9 +226,16 @@ def create_app(db_path, secure_cookies=True):
         and add security headers to every response."""
         h = request.headers
         origin = h.get("origin")
-        if (request.method not in SAFE_METHODS and SESSION_COOKIE in request.cookies
-                and "authorization" not in h and origin is not None
-                and not same_origin(origin, h.get("host"))):
+        # Either name counts, so a cookie planted under the other one is checked too.
+        carries_session = SESSION_COOKIE in request.cookies or \
+            SECURE_SESSION_COOKIE in request.cookies
+        # Browsers send Origin on every unsafe request; one without it is refused
+        # unless the browser says it is same-origin (Sec-Fetch-Site). SameSite is no
+        # help on a host whose parent isn't a public suffix, such as a wildcard-DNS service that puts the IP in the name.
+        from_here = same_origin(origin, h.get("host")) if origin is not None \
+            else h.get("sec-fetch-site") == "same-origin"
+        if (request.method not in SAFE_METHODS and carries_session
+                and "authorization" not in h and not from_here):
             response = JSONResponse({"error": "cross-origin request refused"}, status_code=403)
         else:
             response = await call_next(request)
@@ -460,7 +473,7 @@ def create_app(db_path, secure_cookies=True):
         return TEMPLATES.TemplateResponse(request, template, ctx, status_code=status_code)
 
     def with_session(resp, token):
-        resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="strict",
+        resp.set_cookie(session_cookie, token, httponly=True, samesite="strict",
                         secure=secure_cookies, max_age=service.SESSION_SECONDS)
         return resp
 
@@ -556,9 +569,9 @@ def create_app(db_path, secure_cookies=True):
 
     @app.post("/logout")
     def logout(request: Request, conn=get_db):
-        service.logout(conn, request.cookies.get(SESSION_COOKIE))
+        service.logout(conn, request.cookies.get(session_cookie))
         resp = RedirectResponse("/login", status_code=303)
-        resp.delete_cookie(SESSION_COOKIE, httponly=True, samesite="strict",
+        resp.delete_cookie(session_cookie, httponly=True, samesite="strict",
                            secure=secure_cookies)
         return resp
 
@@ -614,13 +627,13 @@ def create_app(db_path, secure_cookies=True):
             throttle(conn, request, "reauth")
         except BoardError as e:
             return account_view(request, conn, who, error=sentence(e.message), status=e.status)
-        if not service.start_authenticator_change(conn, who, request.cookies.get(SESSION_COOKIE),
+        if not service.start_authenticator_change(conn, who, request.cookies.get(session_cookie),
                                                   password, code, client_key(request)):
             return account_view(request, conn, who, error=service.REAUTH_FAILED, status=401)
         return RedirectResponse("/account/authenticator", status_code=303)
 
     def authenticator_view(request, conn, who, error=None, status=200):
-        details = service.pending_authenticator(conn, who, request.cookies.get(SESSION_COOKIE))
+        details = service.pending_authenticator(conn, who, request.cookies.get(session_cookie))
         if details is None:
             # A confirm that finds nothing is a 410; just opening the page is not an error.
             return account_view(request, conn, who, status=200 if status == 200 else 410,
@@ -641,7 +654,7 @@ def create_app(db_path, secure_cookies=True):
                                       who=Depends(page_who), conn=get_db):
         try:
             token = service.finish_authenticator_change(
-                conn, who, request.cookies.get(SESSION_COOKIE), code)
+                conn, who, request.cookies.get(session_cookie), code)
         except BoardError as e:
             return authenticator_view(request, conn, who, error=sentence(e.message),
                                       status=e.status)
@@ -659,7 +672,7 @@ def create_app(db_path, secure_cookies=True):
         try:
             throttle(conn, request, "reauth")
             options = passkeys.start_registration(
-                conn, who, request.cookies.get(SESSION_COOKIE), password, code, rp_id,
+                conn, who, request.cookies.get(session_cookie), password, code, rp_id,
                 client_key(request))
         except BoardError as e:
             return account_view(request, conn, who, error=sentence(e.message), status=e.status)
@@ -674,7 +687,7 @@ def create_app(db_path, secure_cookies=True):
                                label: str = Form(""), who=Depends(page_who), conn=get_db):
         rp_id, origin = passkeys.relying_party(public_base(request))
         try:
-            passkeys.finish_registration(conn, who, request.cookies.get(SESSION_COOKIE),
+            passkeys.finish_registration(conn, who, request.cookies.get(session_cookie),
                                          credential, label, rp_id, origin)
         except BoardError as e:
             return account_view(request, conn, who, error=sentence(e.message), status=e.status)

@@ -216,6 +216,7 @@ def _asgi(app, method, path, cookies=None, json_body=None, form=None, on_start=N
         headers.append((b"content-type", b"application/x-www-form-urlencoded"))
     if cookies:
         headers.append((b"cookie", "; ".join(f"{k}={v}" for k, v in cookies.items()).encode()))
+        headers.append((b"origin", b"https://testserver"))  # as a browser sends it
     scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
              "method": method, "scheme": "https", "path": path, "raw_path": path.encode(),
              "query_string": b"", "headers": headers, "client": ("127.0.0.1", 1),
