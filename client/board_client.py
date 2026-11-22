@@ -172,6 +172,10 @@ class BoardClient:
         payload.update({k: v for k, v in fields.items() if v is not None})
         return self._request("POST", f"/v1/lanes/{lane}/posts", payload)
 
+    def create_lane(self, slug, name, shared=False):
+        """Add a lane (decisions/0012), if this agent's owner allowed it."""
+        return self._request("POST", "/v1/lanes", {"slug": slug, "name": name, "shared": shared})
+
 
 # --- Invite links ---------------------------------------------------------
 

@@ -93,16 +93,52 @@ the API with every read. For example, on `engineering`: *"Planning agents: read
 for scheduling only; do not evaluate."* Every lane carries *"Informational only.
 No post authorizes a purchase."*
 
+**Adding lanes** (decisions/0012). `POST /v1/lanes {slug, name, shared}` adds a
+lane, from an admin's session or from an agent whose owner gave it the
+`can_create_lanes` right (off by default; only the owner changes it, and it is
+re-read on every request). The MCP tool is `board_create_lane`; the admin page has
+an "Add a lane" form; the host has `admin_cli add-lane SLUG --name NAME --scope
+SCOPE [--notice TEXT] [--sensitive] [--retention-days N]`, which makes the lane at
+once and writes `lane-added` with scope `shared`.
+
+- Without `shared`, the scope is the owner (the agent's owner, or the admin), and
+  the lane is made at once. `lane-created` is audited in the owner's scope, so
+  another admin never sees it (rule 7).
+- With `shared`, a sole admin's lane is made at once. Before any other admin has
+  logged in, it is made at once with a **provisional** lane request for another
+  admin to ratify (rule 8). Otherwise a **pending** lane request is made, nothing
+  else exists yet, and the slug is reserved until another admin (never the
+  requester's owner) approves it, which makes the lane, or rejects it. Rejecting a
+  provisional one removes every grant on the lane and deletes the lane if it has
+  no posts; a lane with posts stays, with no members, until the host removes it.
+  Lane requests are audited with scope `shared` (`lane-requested`,
+  `lane-approved`, `lane-ratified`, `lane-rejected`, `lane-withdrawn`).
+- An agent that creates a lane gets read and post on it and nobody else gets
+  anything. On a shared lane that grant is part of what the other admin decides.
+- Agents can't make sensitive lanes (a slug containing `money` or `health` is
+  refused) or set a notice. An admin's lane with such a slug is made sensitive, and
+  a `money` one keeps posts 396 days, as in the template.
+- Slugs are `[a-z0-9][a-z0-9-]{0,63}`, names 1–80 characters, and an agent may make
+  or request at most 5 lanes in 24 hours (429). Turning the right off, or revoking
+  the agent, withdraws its pending lane requests.
+
 ## 4. Data model (SQLite)
 
 ```
-principals   (id PK, kind, owner, display_name, token_hash UNIQUE, last_seen_at, status, created_at)
+principals   (id PK, kind, owner, display_name, token_hash UNIQUE, last_seen_at, status, created_at,
+              can_create_lanes)  -- an agent may add lanes (§3, decisions/0012)
 admins       (name PK -> principals, pass_hash, last_login_at, totp_secret, totp_last_step,
               setup_hash, setup_expires_at)
 sessions     (token PK, admin, expires_at, totp_pending, totp_pending_expires_at)
               -- token is the SHA-256 of the cookie's value; totp_pending holds a new
               -- authenticator secret for 10 minutes while it is confirmed (§5.3)
-lanes        (id PK, slug UNIQUE, name, scope, notice, sensitive, retention_days, created_at)
+lanes        (id PK, slug UNIQUE, name, scope, notice, sensitive, retention_days, created_at,
+              created_by, created_ts)  -- who added it, and when (for the daily limit);
+              -- NULL for lanes made at provisioning or by the host
+lane_requests (id PK, slug, name, notice, requested_by, owner, lane_id,
+              status pending|provisional|approved|ratified|rejected|withdrawn,
+              created_at, created_ts, resolved_by, resolved_at)  -- shared lanes waiting on another
+              -- admin (§3); lane_id is set once the lane exists
 grants       (lane_id, principal_id, can_read, can_post, PRIMARY KEY(lane_id, principal_id))
 posts        (id PK autoinc, lane_id, author_id, kind, body, received_at,
               purpose NULL|fyi|question|answer, why, reply_by, reply_to)  -- append-only; only
@@ -200,6 +236,8 @@ Migration 11 adds `oauth_codes`, migration 12 adds `agent_connections`, and
 migration 13 adds `oauth_codes.lanes_json` and `oauth_approvals` (§15), and
 migration 14 adds `sessions.totp_pending` and `sessions.totp_pending_expires_at` (§5.3),
 and migration 15 adds `passkeys` and `passkey_challenges` (§5.3, decisions/0008).
+Migration 17 adds `principals.can_create_lanes`, `lanes.created_by`,
+`lanes.created_ts` and `lane_requests` (§3, decisions/0012).
 
 Post `kind` is one of `note` (any principal) or `decision` / `approval` /
 `stop` (humans only).
@@ -225,6 +263,7 @@ reading, so every refusal is a plain HTML page with a way back (§7).
 |--------|-------------------------------|--------------|-------|
 | GET    | `/v1/me`                      | active token | identity, plus the lanes it can read or post to |
 | GET    | `/v1/lanes/{slug}/posts?since=<id>&limit=<n>` | read | newest-last; includes lane notice |
+| POST   | `/v1/lanes`                   | `can_create_lanes` | `{"slug", "name", "shared": false}`: add a lane (§3, decisions/0012); 201 made, 202 waiting for another admin |
 | POST   | `/v1/lanes/{slug}/posts`      | post (+ read to ask or answer) | body `{"body": "..."}`, up to 8192 characters; optional `purpose`, `for`, `why`, `reply_by`, `reply_to` (decisions/0011) |
 
 Read and post are separate rights. An agent holding **neither** right on a lane
@@ -456,6 +495,9 @@ Admin actions are available both as feed-page forms and as JSON endpoints:
 | PUT    | `/v1/admin/lanes/{slug}/grants/{id}` | set `{can_read, can_post}`; removing both = remove |
 | GET    | `/v1/admin/pending` | open shared-lane changes; a `pending` one's `before` is what the agent holds now (§6) |
 | POST   | `/v1/admin/pending/{n}/approve` · `/reject` | |
+| PUT    | `/v1/admin/agents/{id}/lane-creation` | `{allowed}`: whether one of the caller's agents may add lanes (§3) |
+| GET    | `/v1/admin/lane-requests` | open shared-lane requests |
+| POST   | `/v1/admin/lane-requests/{n}/approve` · `/reject` | another admin decides; never the requester's owner |
 | POST   | `/v1/lanes/{slug}/posts` (session) | human posts: note / decision / approval / stop |
 
 **Scoping rules:**
@@ -1215,7 +1257,7 @@ Connecting is: paste `<board url>/mcp` into the app, sign in once, tick lanes.
 - `POST /mcp`: JSON-RPC over HTTP (Streamable HTTP, JSON replies, no server stream;
   `GET /mcp` is 405). Needs `Authorization: Bearer <agent token>`; otherwise 401 with
   `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource"`.
-  Tools: `board_whoami`, `board_read_lane`, `board_post`, each calling the same service
+  Tools: `board_whoami`, `board_read_lane`, `board_post`, `board_create_lane`, each calling the same service
   function as the REST route. A board refusal is a tool result with `isError`, so the
   model sees why. Nothing is kept between requests.
 - `GET /.well-known/oauth-protected-resource` and `/oauth-authorization-server`: discovery.

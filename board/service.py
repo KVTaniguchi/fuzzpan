@@ -468,6 +468,9 @@ def remove_lane(conn, slug):
     requests = conn.execute("SELECT count(*) FROM pending WHERE lane_id = ?", (lane["id"],)).fetchone()[0]
     conn.execute("DELETE FROM pending WHERE lane_id = ?", (lane["id"],))
     conn.execute("DELETE FROM grants WHERE lane_id = ?", (lane["id"],))
+    conn.execute("UPDATE lane_requests SET status = CASE WHEN status IN ('pending', 'provisional') "
+                 "THEN 'withdrawn' ELSE status END, lane_id = NULL WHERE lane_id = ?",
+                 (lane["id"],))
     conn.execute("DELETE FROM lanes WHERE id = ?", (lane["id"],))
     _audit(conn, "host", "lane-removed", "shared", lane=slug, lane_scope=lane["scope"],
            grants=grants, requests=requests)
@@ -502,6 +505,241 @@ def set_retention(conn, slug, days):
     _audit(conn, "host", "lane-retention-set", "shared", lane=slug, lane_scope=lane["scope"],
            days=days)
     return {"lane": slug, "days": days}
+
+
+# --- Adding lanes (decisions/0012) ----------------------------------------
+
+LANE_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+MAX_LANE_NAME_CHARS = 80
+MAX_NOTICE_CHARS = 300
+MAX_LANES_PER_DAY = 5  # made or requested by one agent in 24 hours
+LANE_DAY_SECONDS = 24 * 3600
+OPEN_LANE_REQUEST = ("pending", "provisional")
+SLUG_TAKEN = "that lane slug is taken; pick another"
+
+
+def _sensitive_slug(slug):
+    """Money and health lanes: never an agent's to make; an admin's are made sensitive."""
+    return "money" in slug or "health" in slug
+
+
+def _lane_notice(slug, notice):
+    from board.lanes import BASE_NOTICE, SENSITIVE_NOTICE
+    parts = [BASE_NOTICE]
+    if _sensitive_slug(slug):
+        parts.append(SENSITIVE_NOTICE)
+    if notice:
+        parts.append(notice)
+    return " ".join(parts)
+
+
+def _check_new_lane(conn, slug, name, notice):
+    if not _is_text(slug) or not LANE_SLUG.fullmatch(slug):
+        raise BoardError(400, "slug must be 1 to 64 lowercase letters, digits and hyphens, "
+                              "starting with a letter or digit")
+    if not _is_text(name) or not name.strip() or len(name.strip()) > MAX_LANE_NAME_CHARS:
+        raise BoardError(400, f"give the lane a name of 1 to {MAX_LANE_NAME_CHARS} characters")
+    if notice is not None and (not _is_text(notice) or len(notice.strip()) > MAX_NOTICE_CHARS):
+        raise BoardError(400, f"a notice is text of at most {MAX_NOTICE_CHARS} characters")
+    # One message whoever holds the slug, so another admin's private lane isn't named.
+    if _lane(conn, slug) is not None or conn.execute(
+            "SELECT 1 FROM lane_requests WHERE slug = ? AND status IN ('pending', 'provisional')",
+            (slug,)).fetchone():
+        raise BoardError(409, SLUG_TAKEN)
+    return name.strip(), (notice or "").strip() or None
+
+
+def _insert_lane(conn, slug, name, scope, notice, created_by, sensitive=None, retention_days=None):
+    from board.lanes import MONEY_RETENTION_DAYS
+    if sensitive is None:
+        sensitive = _sensitive_slug(slug)
+        if retention_days is None and "money" in slug:
+            retention_days = MONEY_RETENTION_DAYS
+    cur = conn.execute(
+        "INSERT INTO lanes (slug, name, scope, notice, sensitive, retention_days, created_at, "
+        "created_by, created_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (slug, name, scope, notice, int(bool(sensitive)), retention_days, now_iso(),
+         created_by, _now() if created_by else None))
+    return cur.lastrowid
+
+
+def _lane_creator(conn, caller):
+    """Refuse (403) unless the caller may add lanes now: an admin, or an active
+    agent whose owner turned the right on. Read fresh on every call (rule 4)."""
+    if caller.kind == "human":
+        return
+    row = conn.execute("SELECT status, can_create_lanes FROM principals WHERE id = ? "
+                       "AND kind = 'agent'", (caller.id,)).fetchone()
+    if row is None or row["status"] != "active" or not row["can_create_lanes"]:
+        raise BoardError(403, "this agent may not create lanes; its owner can allow it")
+
+
+def _give_creator(conn, lane_id, slug, scope, creator, actor, **detail):
+    """The agent that asked for a lane gets read and post on it."""
+    row = conn.execute("SELECT kind, status FROM principals WHERE id = ?", (creator,)).fetchone()
+    if row is None or row["kind"] != "agent" or row["status"] != "active":
+        return
+    _apply_grant(conn, lane_id, creator, True, True)
+    _audit(conn, actor, "grant", scope, lane=slug, principal=creator, before=(False, False),
+           after=(True, True), **detail)
+
+
+def create_lane(conn, caller, slug, name, shared=False, notice=None):
+    """Add a lane (decisions/0012). Private: made at once in the owner's scope.
+    Shared: made at once for a sole admin; provisional before any other admin has
+    logged in; otherwise a pending request another admin decides."""
+    _lane_creator(conn, caller)
+    if not isinstance(shared, bool):
+        raise BoardError(400, "shared must be true or false")
+    if caller.kind != "human":
+        if notice is not None:
+            raise BoardError(400, "only an admin can give a lane a notice")
+        if _is_text(slug) and _sensitive_slug(slug):
+            raise BoardError(403, "money and health lanes are made by an admin")
+    name, notice = _check_new_lane(conn, slug, name, notice)
+    if caller.kind != "human":
+        since = _now() - LANE_DAY_SECONDS
+        made = conn.execute("SELECT count(*) FROM lanes WHERE created_by = ? AND created_ts > ?",
+                            (caller.id, since)).fetchone()[0]
+        asked = conn.execute("SELECT count(*) FROM lane_requests WHERE requested_by = ? "
+                             "AND created_ts > ? AND lane_id IS NULL",
+                             (caller.id, since)).fetchone()[0]
+        if made + asked >= MAX_LANES_PER_DAY:
+            raise BoardError(429, f"an agent may add at most {MAX_LANES_PER_DAY} lanes a day")
+    owner = caller.owner
+    full_notice = _lane_notice(slug, notice)
+    agent = caller.id if caller.kind != "human" else None
+    if not shared:
+        lane_id = _insert_lane(conn, slug, name, owner, full_notice, caller.id)
+        _audit(conn, caller.id, "lane-created", owner, lane=slug, lane_scope=owner)
+        if agent:
+            _give_creator(conn, lane_id, slug, owner, agent, owner)
+        return {"lane": slug, "scope": owner, "status": "created"}
+    others = other_admins(conn, owner)
+    if not others:
+        lane_id = _insert_lane(conn, slug, name, "shared", full_notice, caller.id)
+        _audit(conn, caller.id, "lane-created", "shared", lane=slug, lane_scope="shared")
+        if agent:
+            _give_creator(conn, lane_id, slug, "shared", agent, owner)
+        return {"lane": slug, "scope": "shared", "status": "created"}
+    provisional = not any(is_onboarded(conn, a) for a in others)
+    lane_id = None
+    if provisional:
+        lane_id = _insert_lane(conn, slug, name, "shared", full_notice, caller.id)
+    cur = conn.execute(
+        "INSERT INTO lane_requests (slug, name, notice, requested_by, owner, lane_id, status, "
+        "created_at, created_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (slug, name, full_notice, caller.id, owner, lane_id,
+         "provisional" if provisional else "pending", now_iso(), _now()))
+    _audit(conn, caller.id, "lane-requested", "shared", request_id=cur.lastrowid, lane=slug,
+           owner=owner, provisional=provisional)
+    if provisional and agent:
+        _give_creator(conn, lane_id, slug, "shared", agent, owner, lane_request=cur.lastrowid)
+    return {"lane": slug, "scope": "shared",
+            "status": "provisional" if provisional else "pending", "request_id": cur.lastrowid}
+
+
+def add_lane(conn, slug, name, scope, notice=None, sensitive=False, retention_days=None):
+    """Host-side only: add a lane at once, in any scope. Told to every admin, as
+    removing one is."""
+    if scope != "shared" and scope not in list_admins(conn):
+        raise BoardError(400, "scope must be 'shared' or an admin's name")
+    name, notice = _check_new_lane(conn, slug, name, notice)
+    if retention_days is not None and (isinstance(retention_days, bool)
+                                       or not isinstance(retention_days, int)
+                                       or retention_days < MIN_RETENTION_DAYS):
+        raise BoardError(400, f"retention must be at least {MIN_RETENTION_DAYS} days")
+    sensitive = bool(sensitive) or _sensitive_slug(slug)
+    from board.lanes import BASE_NOTICE, SENSITIVE_NOTICE
+    parts = [BASE_NOTICE] + ([SENSITIVE_NOTICE] if sensitive else []) + ([notice] if notice else [])
+    _insert_lane(conn, slug, name, scope, " ".join(parts), None, sensitive, retention_days)
+    _audit(conn, "host", "lane-added", "shared", lane=slug, lane_scope=scope,
+           sensitive=sensitive, retention_days=retention_days)
+    return {"lane": slug, "scope": scope, "sensitive": sensitive}
+
+
+def set_lane_creation(conn, caller, agent_id, allowed):
+    """Whether one of the caller's agents may add lanes. Turning it off withdraws
+    the agent's lane requests that are still waiting."""
+    _require_admin(caller)
+    if not isinstance(allowed, bool):
+        raise BoardError(400, "allowed must be true or false")
+    if not _is_text(agent_id) or own_agent(conn, caller.id, agent_id, active_only=True) is None:
+        raise not_found()
+    conn.execute("UPDATE principals SET can_create_lanes = ? WHERE id = ?",
+                 (int(allowed), agent_id))
+    _audit(conn, caller.id, "lane-creation-on" if allowed else "lane-creation-off", caller.id,
+           principal=agent_id)
+    if not allowed:
+        _withdraw_lane_requests(conn, caller.id, agent_id)
+    return {"id": agent_id, "can_create_lanes": allowed}
+
+
+def _withdraw_lane_requests(conn, actor, agent_id):
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM lane_requests WHERE requested_by = ? AND status = 'pending'", (agent_id,))]
+    if ids:
+        conn.executemany("UPDATE lane_requests SET status = 'withdrawn', resolved_by = ?, "
+                         "resolved_at = ? WHERE id = ?", [(actor, now_iso(), i) for i in ids])
+        _audit(conn, actor, "lane-withdrawn", "shared", principal=agent_id, request_ids=ids)
+
+
+def list_lane_requests(conn, caller):
+    """Open shared-lane requests. Shared lanes concern every admin, so all see them."""
+    _require_admin(caller)
+    rows = conn.execute("SELECT * FROM lane_requests WHERE status IN ('pending', 'provisional') "
+                        "ORDER BY id").fetchall()
+    return [{"id": r["id"], "slug": r["slug"], "name": r["name"],
+             "requested_by": r["requested_by"], "owner": r["owner"], "status": r["status"],
+             "created_at": r["created_at"]} for r in rows]
+
+
+def resolve_lane_request(conn, caller, request_id, approve):
+    """Another admin, never the requester's owner, decides a shared-lane request.
+    Approving a pending one makes the lane and gives the requesting agent read and
+    post; ratifying a provisional one keeps it. Rejecting a provisional one removes
+    every grant on the lane, and the lane itself if it has no posts."""
+    _require_admin(caller)
+    if isinstance(request_id, bool) or not isinstance(request_id, int) or request_id not in INT64:
+        raise not_found()
+    row = conn.execute("SELECT * FROM lane_requests WHERE id = ?", (request_id,)).fetchone()
+    if row is None or row["status"] not in OPEN_LANE_REQUEST:
+        raise BoardError(404, "this lane request was already decided or withdrawn")
+    if row["owner"] == caller.id:
+        raise BoardError(403, "another admin must approve or reject this lane")
+    detail = {"request_id": request_id, "lane": row["slug"]}
+    if row["status"] == "pending" and approve:
+        if _lane(conn, row["slug"]) is not None:
+            raise BoardError(409, SLUG_TAKEN)
+        lane_id = _insert_lane(conn, row["slug"], row["name"], "shared", row["notice"],
+                               row["requested_by"])
+        conn.execute("UPDATE lane_requests SET lane_id = ? WHERE id = ?", (lane_id, request_id))
+        _give_creator(conn, lane_id, row["slug"], "shared", row["requested_by"], caller.id,
+                      lane_request=request_id)
+        status = "approved"
+    elif row["status"] == "pending":
+        status = "rejected"
+    elif approve:
+        status = "ratified"
+    else:
+        status = "rejected"
+        lane = conn.execute("SELECT * FROM lanes WHERE id = ?", (row["lane_id"],)).fetchone()
+        if lane is not None:
+            posts = conn.execute("SELECT count(*) FROM posts WHERE lane_id = ?",
+                                 (lane["id"],)).fetchone()[0]
+            conn.execute("DELETE FROM grants WHERE lane_id = ?", (lane["id"],))
+            conn.execute("UPDATE pending SET status = 'superseded', resolved_by = ?, "
+                         "resolved_at = ? WHERE lane_id = ? AND status IN "
+                         "('pending', 'provisional')", (caller.id, now_iso(), lane["id"]))
+            if not posts:
+                conn.execute("DELETE FROM pending WHERE lane_id = ?", (lane["id"],))
+                conn.execute("DELETE FROM lanes WHERE id = ?", (lane["id"],))
+                conn.execute("UPDATE lane_requests SET lane_id = NULL WHERE id = ?", (request_id,))
+            detail["lane_removed"] = not posts
+    conn.execute("UPDATE lane_requests SET status = ?, resolved_by = ?, resolved_at = ? "
+                 "WHERE id = ?", (status, caller.id, now_iso(), request_id))
+    _audit(conn, caller.id, f"lane-{status}", "shared", **detail)
+    return {"id": request_id, "lane": row["slug"], "status": status}
 
 
 def prune_posts(conn, now=None):
@@ -605,8 +843,14 @@ def me(conn, caller):
         can_read, can_post = rights(conn, caller, lane)
         if can_read or can_post:
             lanes[lane["slug"]] = {"read": can_read, "post": can_post}
+    if caller.kind == "human":
+        may_create = True
+    else:
+        row = conn.execute("SELECT can_create_lanes FROM principals WHERE id = ?",
+                           (caller.id,)).fetchone()
+        may_create = bool(row and row["can_create_lanes"])
     return {"id": caller.id, "kind": caller.kind, "owner": caller.owner,
-            "lanes": dict(sorted(lanes.items()))}
+            "can_create_lanes": may_create, "lanes": dict(sorted(lanes.items()))}
 
 
 # --- Posts --------------------------------------------------------------
@@ -836,6 +1080,7 @@ def revoke_agent(conn, caller, principal_id):
     conn.execute("UPDATE invites SET status = 'cancelled' WHERE agent_id = ? AND "
                  "replaces_token = 1 AND status = 'open'", (principal_id,))
     _audit(conn, caller.id, "revoke", caller.id, principal=principal_id)
+    _withdraw_lane_requests(conn, caller.id, principal_id)
     return {"id": principal_id, "status": "revoked"}
 
 
@@ -1041,11 +1286,14 @@ def list_agents(conn, caller):
             grants.setdefault(g["principal_id"], []).append(
                 {"slug": visible[g["lane_id"]], "read": bool(g["can_read"]),
                  "post": bool(g["can_post"])})
-    rows = conn.execute("SELECT id, owner, display_name, status, last_seen_at FROM principals "
-                        "WHERE kind = 'agent' ORDER BY owner, id").fetchall()
+    rows = conn.execute("SELECT id, owner, display_name, status, last_seen_at, can_create_lanes "
+                        "FROM principals WHERE kind = 'agent' ORDER BY owner, id").fetchall()
     return [{"id": r["id"], "display_name": r["display_name"], "owner": r["owner"],
              "status": r["status"],
              "connection": "connected" if r["last_seen_at"] is not None else "waiting",
+             # Another admin's agent's right is theirs to know (rule 7).
+             "can_create_lanes": bool(r["can_create_lanes"]) if r["owner"] == caller.id
+             else None,
              "lanes": sorted(grants.get(r["id"], []), key=lambda l: l["slug"])} for r in rows]
 
 

@@ -197,6 +197,14 @@ def main(argv=None):
                       help="TOML file of [[lane]] tables replacing the default lanes")
     reset = sub.add_parser("reset-admin", help="clear an admin's login and print a new setup link")
     reset.add_argument("name")
+    addl = sub.add_parser("add-lane", help="add a lane now, in any scope")
+    addl.add_argument("slug")
+    addl.add_argument("--name", required=True)
+    addl.add_argument("--scope", required=True, help="'shared' or an admin's name")
+    addl.add_argument("--notice", help="shown on the lane, after the no-purchase notice")
+    addl.add_argument("--sensitive", action="store_true", help="totals-only rules (§3)")
+    addl.add_argument("--retention-days", type=int, metavar="N",
+                      help="keep posts N days (30 or more); default forever")
     rml = sub.add_parser("remove-lane", help="delete a lane that has no posts")
     rml.add_argument("slug")
     sens = sub.add_parser("set-sensitive", help="turn a lane's totals-only rules on or off")
@@ -231,6 +239,13 @@ def main(argv=None):
     if args.command == "reset-admin":
         token = _on_board(db_path, "reset", lambda conn: service.reset_admin(conn, args.name))
         _print_links({args.name: token})
+        return
+    if args.command == "add-lane":
+        result = _on_board(db_path, "add-lane", lambda conn: service.add_lane(
+            conn, args.slug, args.name, args.scope, args.notice, args.sensitive,
+            args.retention_days))
+        print(f"Added lane {result['lane']} (scope {result['scope']}"
+              f"{', sensitive' if result['sensitive'] else ''}).")
         return
     if args.command == "remove-lane":
         result = _on_board(db_path, "remove-lane",

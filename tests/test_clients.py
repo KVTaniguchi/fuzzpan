@@ -368,10 +368,19 @@ def test_connect_prints_its_own_request_not_the_reply_s(tmp_path, monkeypatch):
 
 # --- MCP server -----------------------------------------------------------
 
-def test_mcp_exposes_exactly_three_tools(engineering):
+def test_mcp_exposes_exactly_four_tools(engineering):
     claude, _ = engineering
     tools = asyncio.run(mcp_server.build_server(claude).list_tools())
-    assert sorted(t.name for t in tools) == ["board_post", "board_read_lane", "board_whoami"]
+    assert sorted(t.name for t in tools) == ["board_create_lane", "board_post",
+                                             "board_read_lane", "board_whoami"]
+
+
+def test_stdio_create_lane_needs_the_owners_say(engineering):
+    from mcp.server.mcpserver.exceptions import ToolError
+    claude, _ = engineering
+    server = mcp_server.build_server(claude)
+    with pytest.raises(ToolError, match="may not create lanes"):
+        asyncio.run(server.call_tool("board_create_lane", {"slug": "garden", "name": "Garden"}))
 
 
 def test_mcp_read_frames_posts_as_untrusted_data(engineering):

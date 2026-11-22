@@ -347,6 +347,14 @@ def create_app(db_path, secure_cookies=True):
                                        payload.get("why"), payload.get("reply_by"),
                                        payload.get("reply_to"))
 
+    @app.post("/v1/lanes")
+    async def add_lane(request: Request, who=Depends(caller), conn=get_db):
+        """Add a lane (decisions/0012): an admin, or an agent whose owner allowed it."""
+        p = json_object(await request.body())
+        made = await run_in_threadpool(service.create_lane, conn, who, p.get("slug"),
+                                       p.get("name"), p.get("shared", False), p.get("notice"))
+        return JSONResponse(made, status_code=202 if made["status"] == "pending" else 201)
+
     # --- Admin API -------------------------------------------------------
 
     @app.get("/v1/admin/principals")
@@ -418,6 +426,23 @@ def create_app(db_path, secure_cookies=True):
         if decision not in ("approve", "reject"):
             raise BoardError(404, "not found")
         return service.resolve_pending(conn, who, pending_id, decision == "approve")
+
+    @app.put("/v1/admin/agents/{agent_id}/lane-creation")
+    async def put_lane_creation(agent_id: str, request: Request, who=Depends(admin),
+                                conn=get_db):
+        p = json_object(await request.body())
+        return await run_in_threadpool(service.set_lane_creation, conn, who, agent_id,
+                                       p.get("allowed"))
+
+    @app.get("/v1/admin/lane-requests")
+    def lane_requests(who=Depends(admin), conn=get_db):
+        return service.list_lane_requests(conn, who)
+
+    @app.post("/v1/admin/lane-requests/{request_id}/{decision}")
+    def resolve_lane(request_id: int, decision: str, who=Depends(admin), conn=get_db):
+        if decision not in ("approve", "reject"):
+            raise BoardError(404, "not found")
+        return service.resolve_lane_request(conn, who, request_id, decision == "approve")
 
     @app.get("/v1/admin/audit")
     def audit(who=Depends(admin), conn=get_db):
@@ -711,6 +736,7 @@ def create_app(db_path, secure_cookies=True):
         invites = service.list_invites(conn, who)
         lanes = service.list_admin_lanes(conn, who)
         pending = service.list_pending(conn, who)
+        lane_requests = service.list_lane_requests(conn, who)
         def count(name):  # a small whole number from the query string, else 0
             value = request.query_params.get(name, "")
             return int(value) if value.isascii() and value.isdigit() and len(value) < 4 else 0
@@ -719,7 +745,8 @@ def create_app(db_path, secure_cookies=True):
         notice = grants_notice(saved, queued) \
             if "saved" in request.query_params or "queued" in request.query_params else None
         return render(request, "admin.html", who=who, agents=agents, invites=invites,
-                      lanes=lanes, pending=pending, notice=notice,
+                      lanes=lanes, pending=pending, lane_requests=lane_requests,
+                      notice=notice or lane_notice(request.query_params.get("lane_notice")),
                       view=build_admin_view(agents, invites, lanes, pending),
                       audit=service.list_audit(conn, who, limit=50))
 
@@ -871,6 +898,30 @@ def create_app(db_path, secure_cookies=True):
         done = service.set_grants(conn, who, changes)
         return RedirectResponse(f"/admin?saved={done['applied'] + done['provisional']}"
                                 f"&queued={done['pending']}#access", status_code=303)
+
+    def lane_notice(code):
+        return {"created": "Lane added.", "provisional": "Lane added. Another admin can ratify "
+                "or reject it once they log in.", "pending": "Lane requested. It is made once "
+                "another admin approves it."}.get(code)
+
+    @app.post("/admin/lanes")
+    def admin_add_lane(slug: str = Form(""), name: str = Form(""), shared: bool = Form(False),
+                       notice: str = Form(""), who=Depends(page_who), conn=get_db):
+        made = service.create_lane(conn, who, slug.strip(), name, shared, notice.strip() or None)
+        return RedirectResponse(f"/admin?lane_notice={made['status']}#lanes-add", status_code=303)
+
+    @app.post("/admin/agents/{agent_id}/lane-creation")
+    def admin_lane_creation(agent_id: str, allowed: str = Form(...), who=Depends(page_who),
+                            conn=get_db):
+        service.set_lane_creation(conn, who, agent_id, allowed == "on")
+        return RedirectResponse("/admin", status_code=303)
+
+    @app.post("/admin/lane-requests/{request_id}/{decision}")
+    def admin_resolve_lane(request_id: int, decision: str, who=Depends(page_who), conn=get_db):
+        if decision not in ("approve", "reject"):
+            raise BoardError(404, "not found")
+        service.resolve_lane_request(conn, who, request_id, decision == "approve")
+        return RedirectResponse("/admin", status_code=303)
 
     @app.post("/admin/pending/{pending_id}/{decision}")
     def admin_resolve(pending_id: int, decision: str, who=Depends(page_who), conn=get_db):

@@ -688,10 +688,40 @@ def _migration_16(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS posts_reply_to ON posts (lane_id, reply_to)")
 
 
+def _migration_17(conn):
+    """Adding lanes after provisioning (decisions/0012): the per-agent right, who made
+    each lane, and shared-lane requests waiting on another admin."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(principals)")}
+    if "can_create_lanes" not in columns:
+        conn.execute("ALTER TABLE principals ADD COLUMN can_create_lanes INTEGER NOT NULL DEFAULT 0")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(lanes)")}
+    if "created_by" not in columns:
+        conn.execute("ALTER TABLE lanes ADD COLUMN created_by TEXT")
+    if "created_ts" not in columns:
+        conn.execute("ALTER TABLE lanes ADD COLUMN created_ts REAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS lane_requests (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug         TEXT NOT NULL,
+            name         TEXT NOT NULL,
+            notice       TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            owner        TEXT NOT NULL,
+            lane_id      INTEGER,
+            status       TEXT NOT NULL CHECK (status IN ('pending', 'provisional', 'approved',
+                                                         'ratified', 'rejected', 'withdrawn')),
+            created_at   TEXT NOT NULL,
+            created_ts   REAL NOT NULL,
+            resolved_by  TEXT,
+            resolved_at  TEXT
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS lane_requests_open ON lane_requests (status, slug)")
+
+
 MIGRATIONS = [_migration_1, _migration_2, _migration_3, _migration_4, _migration_5,
               _migration_6, _migration_7, _migration_8, _migration_9, _migration_10,
               _migration_11, _migration_12, _migration_13, _migration_14,
-              _migration_15, _migration_16]
+              _migration_15, _migration_16, _migration_17]
 
 
 class DatabaseTooNew(Exception):

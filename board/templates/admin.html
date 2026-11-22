@@ -132,10 +132,21 @@
 
 {% if notice %}<p class="banner" role="status">{{ notice }}</p>{% endif %}
 
-{% if pending %}
+{% if pending or lane_requests %}
 <section class="panel attention" aria-label="Approvals">
   <h3>Waiting on approval</h3>
   <ul class="plain">
+    {% for r in lane_requests %}
+    <li class="pend">
+      <div>New shared lane {{ r.slug }} · {{ r.name }}<br>
+        <span class="meta">{{ "in use until another admin ratifies it" if r.status == "provisional" else "not made until another admin approves it" }}
+        · asked by {{ r.requested_by }}{% if r.requested_by != r.owner %} ({{ r.owner }}'s agent){% endif %}</span></div>
+      <div class="actions">{% if r.owner != who.id %}
+        <form class="inline" method="post" action="/admin/lane-requests/{{ r.id }}/approve"><button class="btn">{{ "Ratify" if r.status == "provisional" else "Approve" }}</button></form>
+        <form class="inline" method="post" action="/admin/lane-requests/{{ r.id }}/reject"><button class="btn danger">Reject</button></form>
+      {% else %}<span class="meta">waiting on another admin</span>{% endif %}</div>
+    </li>
+    {% endfor %}
     {% for p in pending %}
     <li class="pend">
       <div>{{ p.lane }} · {{ p.principal }}<br>
@@ -183,6 +194,7 @@
       <div class="actions">
         <a class="btn" href="#row-{{ a.id }}">Edit access</a>
         {% if a.owner == who.id %}
+        <form class="inline" method="post" action="/admin/agents/{{ a.id }}/lane-creation"><input type="hidden" name="allowed" value="{{ 'off' if a.can_create_lanes else 'on' }}"><button class="btn quiet" title="{{ 'This agent can add lanes' if a.can_create_lanes else 'This agent cannot add lanes' }}">{{ "Stop adding lanes" if a.can_create_lanes else "Allow adding lanes" }}</button></form>
         <form class="inline" method="post" action="/admin/reconnect/{{ a.id }}"><button class="btn quiet">Reconnect</button></form>
         <form class="inline" method="post" action="/admin/revoke/{{ a.id }}"><button class="btn quiet danger">Revoke</button></form>
         {% endif %}
@@ -286,6 +298,23 @@
   {% else %}
   <p class="meta">No active agents to give rights to yet.</p>
   {% endif %}
+</section>
+
+<section id="lanes-add" aria-label="Add a lane">
+  <details>
+    <summary><h3>Add a lane</h3>
+      <span class="meta grow">Private lanes are yours alone. A shared lane needs another admin.</span></summary>
+    <div class="dpanel">
+      <form method="post" action="/admin/lanes">
+        <p><label>Slug <input name="slug" required pattern="[a-z0-9][a-z0-9-]{0,63}" maxlength="64" placeholder="garden"></label></p>
+        <p><label>Name <input name="name" required maxlength="80" placeholder="Garden plans"></label></p>
+        <p><label>Notice (optional) <input name="notice" maxlength="300"></label></p>
+        <p><label><input type="checkbox" name="shared" value="true"> Shared with every admin</label></p>
+        <p class="meta">Every lane says no post authorizes a purchase. A slug with "money" or "health" makes a sensitive lane.</p>
+        <button class="btn">Add lane</button>
+      </form>
+    </div>
+  </details>
 </section>
 
 <section aria-label="Audit log">

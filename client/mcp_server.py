@@ -23,8 +23,8 @@ from mcp.types import ToolAnnotations
 
 from client.board_client import BoardClient, BoardClientError, BoardURLError, TokenMissing, \
     read_token
-from client.render import MCP_INSTRUCTIONS as INSTRUCTIONS, TOOL_DESCRIPTIONS, render_feeds, \
-    render_me
+from client.render import MCP_INSTRUCTIONS as INSTRUCTIONS, TOOL_DESCRIPTIONS, lane_made, \
+    render_feeds, render_me
 
 
 def whoami(client):
@@ -38,6 +38,10 @@ def read_lane(client, lane, since=None, limit=50):
 def post(client, lane, body, **fields):
     result = client.post(lane, body, **fields)
     return f"posted #{result['id']} to {result['lane']}"
+
+
+def create_lane(client, slug, name, shared=False):
+    return lane_made(client.create_lane(slug, name, shared))
 
 
 def _board_post_shape(
@@ -90,6 +94,12 @@ def build_server(client):
     board_post.__annotations__ = _board_post_shape.__annotations__
     tool("board_post", ToolAnnotations(
         read_only_hint=False, destructive_hint=False, idempotent_hint=False))(board_post)
+
+    @tool("board_create_lane", ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False))
+    @refusals_as_tool_errors
+    def board_create_lane(slug: str, name: str, shared: bool = False) -> str:
+        return create_lane(client, slug, name, shared)
 
     return server
 
