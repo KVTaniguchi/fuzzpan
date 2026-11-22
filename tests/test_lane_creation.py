@@ -340,3 +340,73 @@ def test_admin_page_add_lane_form(board):
     assert board.q("SELECT scope FROM lanes WHERE slug = 'reading'") == [("alice",)]
     r = alice.post("/admin/lanes", data={"slug": "Bad Slug", "name": "x"})
     assert r.status_code == 400 and "<html" in r.text.lower()
+
+
+# --- Setting a lane's notice --------------------------------------------
+
+def set_notice(board, admin, slug, notice):
+    return board.admin(admin).put(f"/v1/admin/lanes/{slug}/notice", json={"notice": notice})
+
+
+def test_the_owner_sets_a_notice_on_an_agent_made_lane(board, builder):
+    make(builder, "garden", "Garden")
+    r = set_notice(board, "alice", "garden", "  Raised beds and the fence.  ")
+    assert r.status_code == 200 and r.json()["notice"] == "Raised beds and the fence."
+    feed = builder.read("garden").json()
+    assert feed["notice"] == ("Informational only. No post authorizes a purchase. "
+                              "Raised beds and the fence.")
+    assert [s for s, _ in audit(board, "lane-notice-set")] == ["alice"]
+
+
+def test_clearing_a_notice_keeps_the_no_purchase_line(board):
+    set_notice(board, "alice", "engineering", "Something else.")
+    assert set_notice(board, "alice", "engineering", None).status_code == 200
+    assert board.q("SELECT notice FROM lanes WHERE slug = 'engineering'") == [
+        ("Informational only. No post authorizes a purchase.",)]
+
+
+def test_a_sensitive_lane_keeps_its_totals_only_line(board):
+    set_notice(board, "alice", "alice-money", "Monthly totals.")
+    notice = board.q("SELECT notice FROM lanes WHERE slug = 'alice-money'")[0][0]
+    assert "No post authorizes a purchase." in notice and "Totals and averages only" in notice
+    assert notice.endswith("Monthly totals.")
+
+
+def test_only_an_admin_of_the_lane_sets_its_notice(board, builder):
+    assert set_notice(board, "bob", "engineering", "x").status_code == 404  # alice's, unseen
+    assert builder.request("PUT", "/v1/admin/lanes/household/notice",
+                           {"notice": "x"}).status_code == 401
+    assert set_notice(board, "alice", "nope", "x").status_code == 404
+    for bad in ("x" * 301, 5, ["x"]):
+        assert set_notice(board, "alice", "engineering", bad).status_code == 400
+
+
+def test_a_shared_lane_s_notice_change_is_told_to_every_admin(board):
+    assert set_notice(board, "bob", "household", "Groceries on Sundays.").status_code == 200
+    entries = [e for e in board.admin("alice").get("/v1/admin/audit").json()
+               if e["action"] == "lane-notice-set"]
+    assert entries and entries[0]["detail"]["lane"] == "household"
+
+
+def test_admin_page_notice_form(board):
+    alice = board.admin("alice")
+    page = alice.get("/admin").text
+    assert 'action="/admin/lanes/engineering/notice"' in page
+    assert 'action="/admin/lanes/household/notice"' in page
+    r = alice.post("/admin/lanes/engineering/notice", data={"notice": "Read <only>."},
+                   follow_redirects=False)
+    assert r.status_code == 303
+    assert "Read &lt;only&gt;." in alice.get("/admin").text
+    assert 'action="/admin/lanes/engineering/notice"' not in board.admin("bob").get("/admin").text
+
+
+def test_host_set_notice(db, capsys):
+    admin_cli.main(["set-notice", "trips", "Flights need both admins."])
+    assert "trips" in capsys.readouterr().out
+    assert q(db, "SELECT notice FROM lanes WHERE slug = 'trips'")[0][0].endswith(
+        "Flights need both admins.")
+    admin_cli.main(["set-notice", "trips", "off"])
+    assert q(db, "SELECT notice FROM lanes WHERE slug = 'trips'") == [
+        ("Informational only. No post authorizes a purchase.",)]
+    assert q(db, "SELECT count(*) FROM audit_log WHERE action = 'lane-notice-set' "
+                 "AND scope = 'shared'") == [(2,)]

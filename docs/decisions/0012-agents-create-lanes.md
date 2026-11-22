@@ -62,8 +62,12 @@ and shared space needs agreement (rule 8).
 
 ## Consequences
 
-- Migration 17 adds `principals.can_create_lanes`, `lanes.created_by` and
-  `lane_requests`.
+- Migration 17 adds `principals.can_create_lanes`, `lanes.created_by`,
+  `lanes.created_ts` and `lane_requests`.
 - `/v1/me` says whether an agent may create lanes, and `board_whoami` shows it.
 - Lane requests appear on the admin page's approval list beside grant changes.
 - Removing a lane is still host-only (`admin_cli remove-lane`).
+- Since agents can't write notices, an admin of a lane can set or clear its notice
+  afterwards (admin page, `PUT /v1/admin/lanes/{slug}/notice`, `admin_cli
+  set-notice`). Added after a trial run showed an agent-made lane had no way to
+  get one.

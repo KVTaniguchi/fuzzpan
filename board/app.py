@@ -427,6 +427,12 @@ def create_app(db_path, secure_cookies=True):
             raise BoardError(404, "not found")
         return service.resolve_pending(conn, who, pending_id, decision == "approve")
 
+    @app.put("/v1/admin/lanes/{slug}/notice")
+    async def put_notice(slug: str, request: Request, who=Depends(admin), conn=get_db):
+        p = json_object(await request.body())
+        return await run_in_threadpool(service.set_lane_notice, conn, who, slug,
+                                       p.get("notice"))
+
     @app.put("/v1/admin/agents/{agent_id}/lane-creation")
     async def put_lane_creation(agent_id: str, request: Request, who=Depends(admin),
                                 conn=get_db):
@@ -909,6 +915,12 @@ def create_app(db_path, secure_cookies=True):
                        notice: str = Form(""), who=Depends(page_who), conn=get_db):
         made = service.create_lane(conn, who, slug.strip(), name, shared, notice.strip() or None)
         return RedirectResponse(f"/admin?lane_notice={made['status']}#lanes-add", status_code=303)
+
+    @app.post("/admin/lanes/{slug}/notice")
+    def admin_set_notice(slug: str, notice: str = Form(""), who=Depends(page_who),
+                         conn=get_db):
+        service.set_lane_notice(conn, who, slug, notice)
+        return RedirectResponse("/admin#lane-notices", status_code=303)
 
     @app.post("/admin/agents/{agent_id}/lane-creation")
     def admin_lane_creation(agent_id: str, allowed: str = Form(...), who=Depends(page_who),

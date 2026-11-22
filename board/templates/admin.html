@@ -317,6 +317,22 @@
   </details>
 </section>
 
+<section id="lane-notices" aria-label="Lane notices">
+  <details>
+    <summary><h3>Lane notices</h3>
+      <span class="meta grow">Shown to every agent that reads the lane, after the no-purchase line.</span></summary>
+    <div class="dpanel">
+      {% for l in lanes if l.administers %}
+      <form method="post" action="/admin/lanes/{{ l.slug }}/notice">
+        <p><label>{{ l.slug }}{% if l.scope == "shared" %} <span class="scope">Shared</span>{% endif %}
+          <input name="notice" maxlength="300" value="{{ l.custom_notice }}"></label>
+          <button class="btn">Save</button></p>
+      </form>
+      {% endfor %}
+    </div>
+  </details>
+</section>
+
 <section aria-label="Audit log">
   <details>
     <summary>

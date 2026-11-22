@@ -639,6 +639,43 @@ def create_lane(conn, caller, slug, name, shared=False, notice=None):
             "status": "provisional" if provisional else "pending", "request_id": cur.lastrowid}
 
 
+def custom_notice(notice):
+    """The part of a stored notice an admin wrote, without the lines every lane or
+    every sensitive lane carries."""
+    from board.lanes import BASE_NOTICE, SENSITIVE_NOTICE
+    text = notice or ""
+    for fixed in (BASE_NOTICE, SENSITIVE_NOTICE):
+        if text.startswith(fixed):
+            text = text[len(fixed):].lstrip()
+    return text
+
+
+def set_lane_notice(conn, caller, slug, notice):
+    """Replace the admin-written part of a lane's notice; None or blank clears it. The
+    no-purchase line, and a sensitive lane's totals-only line, always stay. An admin
+    of the lane, or the host when `caller` is None. Agents never write notices: one
+    reads like a standing instruction to every agent on the lane."""
+    from board.lanes import BASE_NOTICE, SENSITIVE_NOTICE
+    if caller is None:
+        lane = _lane(conn, slug)
+        if lane is None:
+            raise BoardError(400, "unknown lane")
+    else:
+        _require_admin(caller)
+        lane = administered_lane(conn, caller, slug)
+    if notice is not None and (not _is_text(notice) or len(notice.strip()) > MAX_NOTICE_CHARS):
+        raise BoardError(400, f"a notice is text of at most {MAX_NOTICE_CHARS} characters")
+    notice = (notice or "").strip()
+    parts = [BASE_NOTICE] + ([SENSITIVE_NOTICE] if lane["sensitive"] else []) \
+        + ([notice] if notice else [])
+    conn.execute("UPDATE lanes SET notice = ? WHERE id = ?", (" ".join(parts), lane["id"]))
+    # A private lane's change is its owner's business; a shared lane's, everyone's.
+    scope = "shared" if caller is None else lane["scope"]
+    _audit(conn, "host" if caller is None else caller.id, "lane-notice-set", scope,
+           lane=slug, lane_scope=lane["scope"], cleared=not notice)
+    return {"lane": slug, "notice": notice}
+
+
 def add_lane(conn, slug, name, scope, notice=None, sensitive=False, retention_days=None):
     """Host-side only: add a lane at once, in any scope. Told to every admin, as
     removing one is."""
@@ -1304,7 +1341,7 @@ def list_admin_lanes(conn, caller):
         grants = conn.execute("SELECT principal_id, can_read, can_post FROM grants "
                               "WHERE lane_id = ? ORDER BY principal_id", (lane["id"],)).fetchall()
         out.append({"slug": lane["slug"], "name": lane["name"], "scope": lane["scope"],
-                    "notice": lane["notice"], "sensitive": bool(lane["sensitive"]),
+                    "notice": lane["notice"], "custom_notice": custom_notice(lane["notice"]), "sensitive": bool(lane["sensitive"]),
                     "administers": administers(caller, lane),
                     "grants": [{"principal": g["principal_id"], "read": bool(g["can_read"]),
                                 "post": bool(g["can_post"])} for g in grants]})

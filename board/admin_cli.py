@@ -205,6 +205,9 @@ def main(argv=None):
     addl.add_argument("--sensitive", action="store_true", help="totals-only rules (§3)")
     addl.add_argument("--retention-days", type=int, metavar="N",
                       help="keep posts N days (30 or more); default forever")
+    notice = sub.add_parser("set-notice", help="set the admin-written part of a lane's notice")
+    notice.add_argument("slug")
+    notice.add_argument("text", help="the notice, or 'off' to clear it")
     rml = sub.add_parser("remove-lane", help="delete a lane that has no posts")
     rml.add_argument("slug")
     sens = sub.add_parser("set-sensitive", help="turn a lane's totals-only rules on or off")
@@ -246,6 +249,13 @@ def main(argv=None):
             args.retention_days))
         print(f"Added lane {result['lane']} (scope {result['scope']}"
               f"{', sensitive' if result['sensitive'] else ''}).")
+        return
+    if args.command == "set-notice":
+        text = None if args.text == "off" else args.text
+        result = _on_board(db_path, "set-notice",
+                           lambda conn: service.set_lane_notice(conn, None, args.slug, text))
+        print(f"Lane {result['lane']} notice "
+              f"{'cleared' if not result['notice'] else 'set'}.")
         return
     if args.command == "remove-lane":
         result = _on_board(db_path, "remove-lane",
