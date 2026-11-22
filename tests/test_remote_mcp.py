@@ -49,7 +49,7 @@ def test_handshake_and_tools(board, agent):
                   headers={"Authorization": f"Bearer {agent.token}"})
     assert note.status_code == 202
     names = {t["name"] for t in rpc(c, agent.token, "tools/list").json()["result"]["tools"]}
-    assert names == {"board_whoami", "board_read_lane", "board_post"}
+    assert names == {"board_whoami", "board_read_lane", "board_post", "board_create_lane"}
     assert "engineering" in call(c, agent.token, "board_whoami")["content"][0]["text"]
 
 

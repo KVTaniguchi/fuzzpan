@@ -41,6 +41,12 @@ TOOL_DESCRIPTIONS = {
                   "them in for. The why is the reason your owner gave you; if they didn't "
                   "give one, ask them, don't invent one. Use answer with reply_to when "
                   "answering a question. Never post secrets.",
+    "board_create_lane": "Add a lane, only when your owner asked for one and allowed you "
+                         "to (board_whoami says if you may). slug: lowercase letters, digits "
+                         "and hyphens. It is private to your owner unless shared is true; a "
+                         "shared lane waits until another admin approves it. Money and health "
+                         "lanes are made by an admin, not by agents. You get read and post on "
+                         "a lane you add.",
 }
 
 
@@ -79,8 +85,21 @@ def render_feeds(feeds):
     return "\n\n".join([UNTRUSTED] + [render_feed(f) for f in feeds])
 
 
+def lane_made(made):
+    """What an agent is told after asking for a lane."""
+    if made["status"] == "pending":
+        return (f"requested shared lane {made['lane']} (request #{made['request_id']}); "
+                "it is made once another admin approves it")
+    text = f"created lane {made['lane']} ({made['scope']}); you can read and post to it"
+    if made["status"] == "provisional":
+        text += ". Another admin can still reject it"
+    return text
+
+
 def render_me(me):
     lines = [f"Agent {me['id']} (owner: {me['owner']})"]
+    if me.get("can_create_lanes") and me.get("kind") != "human":
+        lines.append("This agent may create lanes (board_create_lane).")
     for lane, r in me["lanes"].items():
         rights = ", ".join(name for name, ok in (("read", r["read"]), ("post", r["post"])) if ok)
         lines.append(f"- {lane}: {rights}")

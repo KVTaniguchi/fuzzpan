@@ -16,8 +16,8 @@ from starlette.concurrency import run_in_threadpool
 from board import service
 from board.db import connect
 from board.service import BoardError
-from client.render import MCP_INSTRUCTIONS as INSTRUCTIONS, TOOL_DESCRIPTIONS, render_feeds, \
-    render_me
+from client.render import MCP_INSTRUCTIONS as INSTRUCTIONS, TOOL_DESCRIPTIONS, lane_made, \
+    render_feeds, render_me
 
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
@@ -46,6 +46,14 @@ TOOLS = [
          "reply_to": {"type": "integer", "description": "answer: the question's post id"}}},
      "annotations": {"readOnlyHint": False, "destructiveHint": False,
                      "idempotentHint": False}},
+    {"name": "board_create_lane",
+     "description": TOOL_DESCRIPTIONS["board_create_lane"],
+     "inputSchema": {"type": "object", "required": ["slug", "name"], "properties": {
+         "slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+         "name": {"type": "string", "maxLength": 80},
+         "shared": {"type": "boolean", "default": False}}},
+     "annotations": {"readOnlyHint": False, "destructiveHint": False,
+                     "idempotentHint": False}},
 ]
 
 
@@ -65,6 +73,9 @@ def _call(conn, who, name, args):
                                    args.get("purpose"), args.get("for"), args.get("why"),
                                    args.get("reply_by"), args.get("reply_to"))
         return f"posted #{made['id']} to {made['lane']}"
+    if name == "board_create_lane":
+        return lane_made(service.create_lane(conn, who, args.get("slug"), args.get("name"),
+                                             args.get("shared", False)))
     raise KeyError(name)
 
 
