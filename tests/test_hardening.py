@@ -31,7 +31,7 @@ def test_cookies_can_be_made_insecure_only_by_asking(board):
 
 
 def test_session_token_is_hashed_at_rest(board):
-    token = board.admin("alice").cookies["board_session"]
+    token = board.admin("alice").cookies["__Host-board_session"]
     with service.connect(board.app.state.db_path) as c:
         assert not c.execute("SELECT 1 FROM sessions WHERE token = ?", (token,)).fetchone()
         assert c.execute("SELECT 1 FROM sessions WHERE token = ?",
@@ -340,3 +340,56 @@ def test_redemption_is_limited_by_the_same_key(board):
         http = board.anon(f"2001:db8:1:2::{i + 1}")
         assert http.post("/v1/invites/nope/redeem").status_code == 404
     assert board.anon("2001:db8:1:2::ff").post("/v1/invites/nope/redeem").status_code == 429
+
+
+# --- Cookie prefix and Origin-less requests (the board may sit on a wildcard-DNS
+# name with the IP in it, whose parent is not a public suffix: every other host
+# under that parent is then "same-site", so SameSite alone protects nothing) ---
+
+def test_secure_session_cookie_has_the_host_prefix(board):
+    cookie = board.login_response("alice").headers["set-cookie"]
+    assert cookie.startswith("__Host-board_session=")
+    assert "path=/" in cookie.lower() and "domain" not in cookie.lower()
+
+
+def test_insecure_local_cookie_keeps_the_bare_name(board):
+    http = TestClient(create_app(board.app.state.db_path, secure_cookies=False))
+    r = board.login("alice", board.code("alice"), http=http)
+    assert r.headers["set-cookie"].startswith("board_session=")
+
+
+def test_a_session_under_the_bare_name_does_not_log_in_on_a_secure_board(board):
+    """A sibling host can set `board_session` for the parent domain; only the
+    __Host- cookie, which no other host can set, is read."""
+    token = board.admin("alice").cookies["__Host-board_session"]
+    http = board.anon(cookies={"board_session": token})
+    assert http.get("/admin", follow_redirects=False).status_code == 303
+
+
+def test_unsafe_request_with_session_and_no_origin_is_refused(board):
+    http = board.admin("alice")
+    r = http.post("/logout", headers={"origin": ""}, follow_redirects=False)
+    assert r.status_code == 403  # an empty Origin is no origin
+    no_origin = TestClient(board.app, base_url=HTTPS,
+                           cookies={"__Host-board_session":
+                                    http.cookies["__Host-board_session"]})
+    assert no_origin.post("/logout", follow_redirects=False).status_code == 403
+    assert no_origin.post("/logout", headers={"sec-fetch-site": "same-site"},
+                          follow_redirects=False).status_code == 403
+    assert no_origin.post("/logout", headers={"sec-fetch-site": "cross-site"},
+                          follow_redirects=False).status_code == 403
+    # The refusals did nothing; a browser saying it is same-origin gets through.
+    assert http.get("/admin", follow_redirects=False).status_code == 200
+    assert no_origin.post("/logout", headers={"sec-fetch-site": "same-origin"},
+                          follow_redirects=False).status_code == 303
+
+
+def test_a_planted_bare_cookie_still_gets_the_origin_check(board):
+    http = board.anon(cookies={"board_session": "planted"})
+    assert http.post("/logout", headers={"origin": "https://evil.shared-parent.example"}).status_code == 403
+
+
+def test_no_origin_without_a_session_cookie_is_not_this_checks_business(board):
+    r = TestClient(board.app, base_url=HTTPS).post(
+        "/login", data={"username": "alice", "password": "x" * 12, "code": "000000"})
+    assert r.status_code == 401

@@ -119,6 +119,9 @@ class Board:
         board keys login limits on it); other arguments go to TestClient."""
         if ip is not None:
             kwargs["client"] = (ip, 50000)
+        # Like a browser on the board's own pages: every request names this origin,
+        # which the Origin check needs on unsafe requests that carry the session.
+        kwargs["headers"] = {"origin": HTTPS, **kwargs.get("headers", {})}
         return TestClient(self.app, base_url=HTTPS, **kwargs)
 
     def q(self, sql, *args):

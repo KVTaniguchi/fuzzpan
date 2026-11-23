@@ -98,7 +98,7 @@ def test_login_needs_password_and_code(board):
     assert board.login("alice", wrong_code(board)).status_code == 401
     assert board.login("alice", "").status_code == 401
     ok = board.login("alice", board.code("alice"))
-    assert ok.status_code == 303 and "board_session" in ok.cookies
+    assert ok.status_code == 303 and "__Host-board_session" in ok.cookies
 
 
 def test_login_fields_are_username_password_code(board):
